@@ -1,0 +1,22 @@
+# Chat2Order 설정 파일
+
+# Gemini API 설정
+gemini:
+  model: "gemini-3.1-flash-lite-preview"
+  temperature: 0.1
+
+# 출력 파일 설정
+output:
+  file_name: "orders_extracted.xlsx"
+  sheet_name: "주문내역"
+
+# 추출 대상 컬럼
+columns:
+  - time
+  - name
+  - phone_number
+  - address
+  - zip_code
+  - product
+  - option
+  - volume
