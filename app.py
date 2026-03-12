@@ -1,17 +1,26 @@
+import re
+import requests
 import streamlit as st
 import pandas as pd
 import json
 import io
 import ast
+import yaml
+from datetime import datetime
 from pydantic import BaseModel
 from google import genai
 from google.genai import types
+
+# --- 0. 설정 파일 로드 ---
+with open("config.yaml", "r", encoding="utf-8") as f:
+    config = yaml.safe_load(f)
 
 # --- 1. 데이터 모델 정의 (Pydantic을 이용한 Structured Output 스키마) ---
 class OrderItem(BaseModel):
     name: str | None
     phone_number: str | None
     address: str | None
+    search_address: str | None
     product: str | None
     option: str | None
     volume: int | None
@@ -28,7 +37,6 @@ def parse_custom_jsonl(uploaded_file):
         if not line:
             continue
         try:
-            # 안전하게 문자열을 파이썬 딕셔너리로 변환
             parsed_dict = ast.literal_eval(line)
             data.append(parsed_dict)
         except Exception as e:
@@ -41,43 +49,80 @@ def extract_orders_from_chat(api_key: str, catalog_data: list, chat_data: list):
     Gemini API를 호출하여 대화에서 주문 정보를 추출합니다.
     """
     client = genai.Client(api_key=api_key)
-    
+
     catalog_str = json.dumps(catalog_data, ensure_ascii=False, indent=2)
     chat_str = json.dumps(chat_data, ensure_ascii=False, indent=2)
-    
+
     prompt = f"""
     너는 쇼핑몰의 메신저 대화에서 주문 데이터를 추출하는 전문가야.
     아래 제공된 '상품 카탈로그'를 기준으로, '고객 대화 내역'을 분석해서 주문자의 이름, 연락처, 주소, 주문상품, 옵션, 수량을 추출해.
-    
+
     [상품 카탈로그]
     {catalog_str}
-    
+
     [고객 대화 내역]
     {chat_str}
-    
+
     지시사항:
     1. 대화 내역에서 주문이 확정된 내역(입금 완료 등)을 위주로 추출해.
-    2. 상품명(product)은 반드시 카탈로그에 있는 가장 유사한 상품명으로 매핑해.
-    3. 색상, 사이즈 등의 옵션(option)이 있다면 분리해서 적고, 수량(volume)은 정수로 적어.
-    4. 대화에서 파악할 수 없는 정보는 null로 비워둬.
+    2. 주문이 없는 건은 row에 추가하지 말아줘.
+    3. 상품명(product)은 반드시 카탈로그에 있는 가장 유사한 상품명으로 매핑해.
+    4. 색상, 사이즈 등의 옵션(option)이 있다면 분리해서 적고, 수량(volume)은 정수로 적어.
+    5. 배송 받을 이름을 따로 적어주지 않았다면, 채팅 내역에서 user이름으로 적고 (채팅명)으로 표기해줘. 'user이름(채팅명)'
+    6. address는 고객이 말한 전체 주소를 그대로 적어.
+    7. search_address는 우편번호 검색용으로, address에서 동/호수 등 상세주소(아파트 동호수, 건물명 등)를 제거하고 도로명+건물번호까지만 적어. (예: "부산 북구 백양대로1050번길 16")
+    8. 대화에서 파악할 수 없는 정보는 null로 비워둬.
     """
-    
+
     try:
-        # Gemini 2.5 Flash 모델 사용 및 Structured Output 강제
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=config["gemini"]["model"],
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=list[OrderItem], # Pydantic 모델을 이용해 리스트 형태로 반환 강제
-                temperature=0.1, # 일관된 결과를 위해 온도 낮춤
+                response_schema=list[OrderItem],
+                temperature=config["gemini"]["temperature"],
             ),
         )
-        # JSON 문자열 응답을 파이썬 리스트/딕셔너리로 변환
         return json.loads(response.text)
     except Exception as e:
         st.error(f"Gemini API 호출 중 오류가 발생했습니다: {e}")
         return None
+
+# --- 3-1. 후처리: 우편번호 조회 ---
+def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
+    """도로명주소 검색API로 우편번호를 조회합니다."""
+    if not address or not juso_api_key:
+        return None
+    try:
+        resp = requests.get(
+            "https://business.juso.go.kr/addrlink/addrLinkApi.do",
+            params={
+                "confmKey": juso_api_key,
+                "currentPage": 1,
+                "countPerPage": 1,
+                "keyword": address,
+                "resultType": "json",
+            },
+            timeout=5,
+        )
+        data = resp.json()
+        juso_list = data.get("results", {}).get("juso", [])
+        if juso_list:
+            return juso_list[0].get("zipNo")
+    except Exception:
+        pass
+    return None
+
+# --- 3-2. 후처리: 전화번호 포맷 정규화 ---
+def format_phone_number(phone: str | None) -> str | None:
+    """전화번호에서 숫자만 추출 후 010-XXXX-XXXX 형식으로 변환합니다."""
+    if not phone:
+        return phone
+    digits = re.sub(r"\D", "", phone)
+    if len(digits) == 11 and digits.startswith("010"):
+        return f"{digits[:3]}-{digits[3:7]}-{digits[7:]}"
+    return phone
 
 # --- 4. Streamlit UI 구성 ---
 st.set_page_config(page_title="메신저 주문서 자동 추출기", layout="wide")
@@ -96,6 +141,9 @@ with st.sidebar:
     st.header("설정")
     api_key_input = st.text_input("Gemini API Key를 입력하세요", type="password")
     st.markdown("[API Key 발급받기](https://aistudio.google.com/app/apikey)")
+    st.divider()
+    juso_api_key_input = st.text_input("도로명주소 API Key (선택)", type="password")
+    st.markdown("[API Key 발급받기](https://business.juso.go.kr)")
 
 # 메인 화면: 파일 업로드
 col1, col2 = st.columns(2)
@@ -119,38 +167,55 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
         with st.spinner("Gemini가 대화를 분석하고 주문서를 작성 중입니다... (데이터량에 따라 10~30초 소요)"):
             # 1. 파일 파싱
             catalog_data = parse_custom_jsonl(catalog_file)
-            
+
             all_extracted_orders = []
-            
+
             # 2. 업로드된 여러 개의 채팅 파일을 순회하며 추출
             for chat_file in chat_files:
                 chat_data = parse_custom_jsonl(chat_file)
                 extracted_data = extract_orders_from_chat(api_key_input, catalog_data, chat_data)
-                
+
                 if extracted_data:
+                    # 파일명에서 timestamp 추출 (예: 김성희_2026-03-12-10-17-22.jsonl)
+                    ts_match = re.search(r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", chat_file.name)
+                    if ts_match:
+                        ts = datetime.strptime(ts_match.group(1), "%Y-%m-%d-%H-%M-%S")
+                    else:
+                        ts = None
+                    for order in extracted_data:
+                        order["time"] = ts
                     all_extracted_orders.extend(extracted_data)
-            
+
             # 3. 데이터프레임 변환 및 결과 출력
             if all_extracted_orders:
                 df = pd.DataFrame(all_extracted_orders)
-                
-                # 열 순서 정렬 (누락된 컬럼은 빈 값으로 채움)
-                expected_columns = ['name', 'phone_number', 'address', 'product', 'option', 'volume']
-                df = df.reindex(columns=expected_columns)
-                
+
+                # 전화번호 포맷 정규화
+                df["phone_number"] = df["phone_number"].apply(format_phone_number)
+
+                # 우편번호 조회 (juso API 키가 있을 때만, reindex 전에 실행)
+                if juso_api_key_input:
+                    with st.spinner("우편번호를 조회 중입니다..."):
+                        df["zip_code"] = df["search_address"].apply(
+                            lambda addr: lookup_zip_code(addr, juso_api_key_input)
+                        )
+
+                # 열 순서 정렬 (누락된 컬럼은 빈 값으로 채움, search_address 제외)
+                df = df.reindex(columns=config["columns"])
+
                 st.success("🎉 주문 데이터 추출이 완료되었습니다!")
                 st.dataframe(df, use_container_width=True)
-                
+
                 # 4. 엑셀 파일로 변환 및 다운로드 버튼 생성
                 output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    df.to_excel(writer, index=False, sheet_name='주문내역')
+                with pd.ExcelWriter(output, engine='openpyxl', datetime_format='YYYY-MM-DD HH:MM:SS') as writer:
+                    df.to_excel(writer, index=False, sheet_name=config["output"]["sheet_name"])
                 processed_data = output.getvalue()
-                
+
                 st.download_button(
                     label="📥 엑셀 파일(.xlsx) 다운로드",
                     data=processed_data,
-                    file_name="orders_extracted.xlsx",
+                    file_name=config["output"]["file_name"],
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary"
                 )
