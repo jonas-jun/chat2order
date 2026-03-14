@@ -80,14 +80,14 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. 카탈로그 업로드")
     catalog_file = st.file_uploader(
-        "catalog.jsonl 파일을 업로드하세요.", type=["jsonl", "txt"]
+        "catalog.jsonl 파일을 업로드하세요.", type=["jsonl"]
     )
 
 with col2:
     st.subheader("2. 대화 내역 업로드")
     chat_files = st.file_uploader(
         "대화 파일들을 업로드하세요. (CSV 또는 JSONL)",
-        type=["csv", "jsonl", "txt"],
+        type=["csv", "jsonl"],
         accept_multiple_files=True,
     )
 
