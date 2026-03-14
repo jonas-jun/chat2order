@@ -1,0 +1,48 @@
+# Chat2Order 설정 파일: api key 추가하여 config.yaml로 파일명 바꿔서 사용
+
+# Gemini API 설정
+gemini:
+  model: "gemini-3.1-flash-lite-preview"
+  temperature: 0.1
+
+# 도로명주소 API 키
+juso:
+  api_key: "{API_KEY}"
+
+# 출력 파일 설정
+output:
+  file_name: "orders_extracted.xlsx"
+  sheet_name: "주문내역"
+
+# 추출 대상 컬럼
+columns:
+  - time
+  - name
+  - phone_number
+  - address
+  - zip_code
+  - product
+  - option
+  - volume
+
+# LLM 프롬프트
+prompt:
+  order_extraction: |
+    너는 쇼핑몰의 메신저 대화에서 주문 데이터를 추출하는 전문가야.
+    아래 제공된 '상품 카탈로그'를 기준으로, '고객 대화 내역'을 분석해서 주문자의 이름, 연락처, 주소, 주문상품, 옵션, 수량을 추출해.
+
+    [상품 카탈로그]
+    {catalog}
+
+    [고객 대화 내역]
+    {chat}
+
+    지시사항:
+    1. 대화 내역에서 주문이 확정된 내역(입금 완료 등)을 위주로 추출해.
+    2. 주문이 없는 건은 row에 추가하지 말아줘.
+    3. 상품명(product)은 반드시 카탈로그에 있는 가장 유사한 상품명으로 매핑해.
+    4. 색상, 사이즈 등의 옵션(option)이 있다면 분리해서 적고, 수량(volume)은 정수로 적어.
+    5. 배송 받을 이름을 따로 적어주지 않았다면, 채팅 내역에서 user이름으로 적고 (채팅명)으로 표기해줘. 'user이름(채팅명)'
+    6. address는 고객이 말한 전체 주소를 그대로 적어.
+    7. search_address는 우편번호 검색용으로, address에서 동/호수 등 상세주소(아파트 동호수, 건물명 등)를 제거하고 도로명+건물번호까지만 적어. (예: "부산 북구 백양대로1050번길 16")
+    8. 대화에서 파악할 수 없는 정보는 null로 비워둬.
