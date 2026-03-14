@@ -9,6 +9,11 @@ gemini:
 juso:
   api_key: "{API_KEY}"
 
+# Supabase 설정
+supabase:
+  url: "{SUPABASE_URL}"
+  key: "{SUPABASE_ANON_KEY}"
+
 # 출력 파일 설정
 output:
   file_name: "orders_extracted.xlsx"
