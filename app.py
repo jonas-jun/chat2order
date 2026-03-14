@@ -14,12 +14,40 @@ from services import (
 )
 from database import get_connection, save_training_record
 
+# --- UI 구성 ---
+st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
+
+if "logged_in_user" not in st.session_state:
+    st.session_state["logged_in_user"] = None
+
+if not st.session_state["logged_in_user"]:
+    st.markdown("## 🔐 로그인")
+    with st.form("login_form"):
+        email = st.text_input("이메일")
+        password = st.text_input("비밀번호", type="password")
+        submit_button = st.form_submit_button("로그인")
+
+        if submit_button:
+            tester_accounts = st.secrets.get("tester_accounts", {})
+            if email in tester_accounts and str(tester_accounts[email]) == password:
+                st.session_state["logged_in_user"] = email
+                st.rerun()
+            else:
+                st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
+    st.stop()  # 로그인되지 않은 경우 아래 메인 앱 코드 실행 방지
+
+# 로그인된 사용자 표시 및 로그아웃 버튼 (사이드바)
+with st.sidebar:
+    st.write(f"👤 **{st.session_state['logged_in_user']}**님 환영합니다.")
+    if st.button("로그아웃"):
+        st.session_state["logged_in_user"] = None
+        st.rerun()
+    st.divider()
+
+
 # --- 설정 파일 로드 ---
 with open("config.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
-
-# --- UI 구성 ---
-st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
 
 st.markdown(
     "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",
@@ -111,6 +139,7 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                     if db_conn:
                         save_training_record(
                             conn=db_conn,
+                            user_email=st.session_state["logged_in_user"],
                             chat_filename=chat_file.name,
                             model_name=config["gemini"]["model"],
                             catalog_data=catalog_data,
