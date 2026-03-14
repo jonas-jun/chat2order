@@ -11,11 +11,12 @@ def get_connection(url: str, key: str) -> Client:
 
 def save_training_record(
     conn: Client,
+    user_email: str,
     chat_filename: str,
     model_name: str,
     catalog_data: list,
     chat_data: list,
-    response_json: list | dict,
+    response_json: list | dict, 
 ) -> str:
     """학습 데이터 레코드를 Supabase에 저장하고 id를 반환합니다."""
     result = (
@@ -23,6 +24,7 @@ def save_training_record(
         .insert(
             {
                 "created_at": datetime.now().isoformat(),
+                "user": user_email,
                 "chat_filename": chat_filename,
                 "model_name": model_name,
                 "catalog_json": json.dumps(catalog_data, ensure_ascii=False),
