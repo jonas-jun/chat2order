@@ -3,6 +3,7 @@ CLI 실행 예시:
   python3 main.py --api-key <GEMINI_KEY> --catalog catalog.jsonl --chat chat1.csv chat2.csv
   python3 main.py --catalog catalog.jsonl --chat chat1.csv  # api-key는 config.yaml의 값 사용 불가, 필수 입력
 """
+
 import argparse
 import io
 from pathlib import Path
@@ -28,6 +29,7 @@ def load_config(path: str = "config.yaml") -> dict:
 
 class FileWrapper:
     """Path를 Streamlit UploadedFile처럼 감싸는 래퍼 (services 함수 호환용)"""
+
     def __init__(self, path: Path):
         self.name = path.name
         self._data = path.read_bytes()
@@ -40,8 +42,17 @@ def main():
     parser = argparse.ArgumentParser(description="Chat2Order CLI")
     parser.add_argument("--api-key", required=True, help="Gemini API Key")
     parser.add_argument("--catalog", required=True, help="카탈로그 JSONL 파일 경로")
-    parser.add_argument("--chat", required=True, nargs="+", help="대화 파일 경로 (CSV 또는 JSONL), 여러 개 가능")
-    parser.add_argument("--output", default=None, help="출력 엑셀 파일명 (기본값: config.yaml의 file_name)")
+    parser.add_argument(
+        "--chat",
+        required=True,
+        nargs="+",
+        help="대화 파일 경로 (CSV 또는 JSONL), 여러 개 가능",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        help="출력 엑셀 파일명 (기본값: config.yaml의 file_name)",
+    )
     parser.add_argument("--config", default="config.yaml", help="설정 파일 경로")
     args = parser.parse_args()
 
@@ -84,7 +95,9 @@ def main():
         if extracted_data:
             chat_name = extract_chat_name(
                 p.name,
-                filename_prefix=config["csv"]["filename_prefix"] if p.suffix == ".csv" else "",
+                filename_prefix=(
+                    config["csv"]["filename_prefix"] if p.suffix == ".csv" else ""
+                ),
             )
             for order in extracted_data:
                 order["time"] = ts
@@ -109,7 +122,9 @@ def main():
     df = df.reindex(columns=config["columns"])
 
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS") as writer:
+    with pd.ExcelWriter(
+        output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
+    ) as writer:
         df.to_excel(writer, index=False, sheet_name=config["output"]["sheet_name"])
 
     Path(output_path).write_bytes(output.getvalue())

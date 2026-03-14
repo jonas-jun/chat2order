@@ -12,7 +12,7 @@ from services import (
     extract_timestamp,
     extract_chat_name,
 )
-from database import get_connection, save_training_record, get_record_count
+from database import get_connection, save_training_record
 
 # --- 설정 파일 로드 ---
 with open("config.yaml", "r", encoding="utf-8") as f:
@@ -22,14 +22,20 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 st.set_page_config(page_title="메신저 주문서 자동 추출기", layout="wide")
 
 st.title("📦 Chat2Order: 메신저 주문 자동 정리기")
-st.markdown("사장님은 소통에만 집중하세요. 대화 속 주문 정리는 Chat2Order가 알아서 엑셀로 만들어 드립니다.")
+st.markdown(
+    "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 Chat2Order가 알아서 엑셀로 만들어 드립니다."
+)
 
 juso_api_key = config["juso"]["api_key"]
 
 # --- DB 연결 ---
 supabase_url = config.get("supabase", {}).get("url", "")
 supabase_key = config.get("supabase", {}).get("key", "")
-db_conn = get_connection(supabase_url, supabase_key) if supabase_url and supabase_key else None
+db_conn = (
+    get_connection(supabase_url, supabase_key)
+    if supabase_url and supabase_key
+    else None
+)
 
 # 사이드바: API 키 입력
 with st.sidebar:
@@ -41,11 +47,17 @@ with st.sidebar:
 col1, col2 = st.columns(2)
 with col1:
     st.subheader("1. 카탈로그 업로드")
-    catalog_file = st.file_uploader("catalog.jsonl 파일을 업로드하세요.", type=["jsonl", "txt"])
+    catalog_file = st.file_uploader(
+        "catalog.jsonl 파일을 업로드하세요.", type=["jsonl", "txt"]
+    )
 
 with col2:
     st.subheader("2. 대화 내역 업로드")
-    chat_files = st.file_uploader("대화 파일들을 업로드하세요. (CSV 또는 JSONL)", type=["csv", "jsonl", "txt"], accept_multiple_files=True)
+    chat_files = st.file_uploader(
+        "대화 파일들을 업로드하세요. (CSV 또는 JSONL)",
+        type=["csv", "jsonl", "txt"],
+        accept_multiple_files=True,
+    )
 
     if chat_files:
         with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
@@ -61,7 +73,9 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
     elif not chat_files:
         st.warning("대화 내역 파일을 1개 이상 업로드해 주세요.")
     else:
-        with st.spinner("Gemini가 대화를 분석하고 주문서를 작성 중입니다... (데이터량에 따라 10~30초 소요)"):
+        with st.spinner(
+            "Gemini가 대화를 분석하고 주문서를 작성 중입니다... (데이터량에 따라 10~30초 소요)"
+        ):
             catalog_data = parse_custom_jsonl(catalog_file)
             all_extracted_orders = []
 
@@ -101,7 +115,11 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                         )
                     chat_name = extract_chat_name(
                         chat_file.name,
-                        filename_prefix=config["csv"]["filename_prefix"] if chat_file.name.endswith(".csv") else "",
+                        filename_prefix=(
+                            config["csv"]["filename_prefix"]
+                            if chat_file.name.endswith(".csv")
+                            else ""
+                        ),
                     )
                     for order in extracted_data:
                         order["time"] = ts
@@ -124,8 +142,12 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
             st.dataframe(df, use_container_width=True)
 
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS") as writer:
-                df.to_excel(writer, index=False, sheet_name=config["output"]["sheet_name"])
+            with pd.ExcelWriter(
+                output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
+            ) as writer:
+                df.to_excel(
+                    writer, index=False, sheet_name=config["output"]["sheet_name"]
+                )
 
             st.download_button(
                 label="📥 엑셀 파일(.xlsx) 다운로드",
@@ -135,4 +157,6 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                 type="primary",
             )
         else:
-            st.error("추출된 데이터가 없습니다. 원본 데이터나 API 상태를 확인해 주세요.")
+            st.error(
+                "추출된 데이터가 없습니다. 원본 데이터나 API 상태를 확인해 주세요."
+            )

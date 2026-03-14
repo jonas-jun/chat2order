@@ -18,19 +18,19 @@ def save_training_record(
     response_json: list | dict,
 ) -> str:
     """학습 데이터 레코드를 Supabase에 저장하고 id를 반환합니다."""
-    result = conn.table("training_data").insert({
-        "created_at": datetime.now().isoformat(),
-        "chat_filename": chat_filename,
-        "model_name": model_name,
-        "catalog_json": json.dumps(catalog_data, ensure_ascii=False),
-        "chat_json": json.dumps(chat_data, ensure_ascii=False),
-        "response_json": json.dumps(response_json, ensure_ascii=False),
-        "is_verified": False,
-    }).execute()
+    result = (
+        conn.table("training_data")
+        .insert(
+            {
+                "created_at": datetime.now().isoformat(),
+                "chat_filename": chat_filename,
+                "model_name": model_name,
+                "catalog_json": json.dumps(catalog_data, ensure_ascii=False),
+                "chat_json": json.dumps(chat_data, ensure_ascii=False),
+                "response_json": json.dumps(response_json, ensure_ascii=False),
+                "is_verified": False,
+            }
+        )
+        .execute()
+    )
     return result.data[0]["id"]
-
-
-def get_record_count(conn: Client) -> int:
-    """저장된 레코드 수를 반환합니다."""
-    result = conn.table("training_data").select("id", count="exact").execute()
-    return result.count

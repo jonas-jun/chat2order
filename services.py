@@ -37,7 +37,14 @@ def parse_custom_jsonl(source) -> list:
     return data
 
 
-def extract_orders_from_chat(api_key: str, catalog_data: list, chat_data: list, model: str, temperature: float, prompt_template: str) -> list | None:
+def extract_orders_from_chat(
+    api_key: str,
+    catalog_data: list,
+    chat_data: list,
+    model: str,
+    temperature: float,
+    prompt_template: str,
+) -> list | None:
     """Gemini API를 호출하여 대화에서 주문 정보를 추출합니다."""
     client = genai.Client(api_key=api_key)
 
@@ -103,7 +110,7 @@ def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
     """
     name = Path(filename).stem  # 확장자 제거
     if filename_prefix and name.startswith(filename_prefix):
-        return name[len(filename_prefix):]
+        return name[len(filename_prefix) :]
     # JSONL: 끝의 타임스탬프 패턴 제거
     return re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name) or None
 
@@ -116,7 +123,9 @@ def extract_timestamp(filename: str) -> datetime | None:
     return None
 
 
-def parse_csv(source, filename_prefix: str, exclude_messages: list) -> tuple[list, datetime | None]:
+def parse_csv(
+    source, filename_prefix: str, exclude_messages: list
+) -> tuple[list, datetime | None]:
     """
     카카오톡 채널 CSV를 파싱하여 (messages, timestamp) 튜플을 반환합니다.
     source: Streamlit UploadedFile 또는 파일 경로(str/Path)
