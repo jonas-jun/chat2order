@@ -12,6 +12,7 @@ from services import (
     extract_timestamp,
     extract_chat_name,
 )
+from database import get_connection, save_training_record, get_record_count
 
 # --- 설정 파일 로드 ---
 with open("config.yaml", "r", encoding="utf-8") as f:
@@ -23,13 +24,12 @@ st.set_page_config(page_title="메신저 주문서 자동 추출기", layout="wi
 st.title("📦 Chat2Order: 메신저 주문 자동 정리기")
 st.markdown("사장님은 소통에만 집중하세요. 대화 속 주문 정리는 Chat2Order가 알아서 엑셀로 만들어 드립니다.")
 
-st.warning(
-    "⚠️ **보안 안내**: 본 서비스는 프로토타입 검증 환경입니다. "
-    "실제 고객의 민감한 개인정보(이름, 연락처, 주소 등)가 포함된 원본 데이터 업로드를 지양하고, "
-    "**테스트용 더미 데이터**로 검증해 주세요."
-)
-
 juso_api_key = config["juso"]["api_key"]
+
+# --- DB 연결 ---
+supabase_url = config.get("supabase", {}).get("url", "")
+supabase_key = config.get("supabase", {}).get("key", "")
+db_conn = get_connection(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
 # 사이드바: API 키 입력
 with st.sidebar:
@@ -90,6 +90,15 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                     extracted_data = None
 
                 if extracted_data:
+                    if db_conn:
+                        save_training_record(
+                            conn=db_conn,
+                            chat_filename=chat_file.name,
+                            model_name=config["gemini"]["model"],
+                            catalog_data=catalog_data,
+                            chat_data=chat_data,
+                            response_json=extracted_data,
+                        )
                     chat_name = extract_chat_name(
                         chat_file.name,
                         filename_prefix=config["csv"]["filename_prefix"] if chat_file.name.endswith(".csv") else "",
