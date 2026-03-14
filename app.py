@@ -19,11 +19,15 @@ with open("config.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 # --- UI 구성 ---
-st.set_page_config(page_title="메신저 주문서 자동 추출기", layout="wide")
+st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
 
-st.title("📦 Chat2Order: 메신저 주문 자동 정리기")
 st.markdown(
-    "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 Chat2Order가 알아서 엑셀로 만들어 드립니다."
+    "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",
+    unsafe_allow_html=True,
+)
+st.markdown(
+    "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 C2O가 알아서 엑셀로 만들어 드립니다.",
+    unsafe_allow_html=True,
 )
 
 juso_api_key = st.secrets.get("juso", {}).get("api_key", "")
