@@ -26,11 +26,11 @@ st.markdown(
     "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 Chat2Order가 알아서 엑셀로 만들어 드립니다."
 )
 
-juso_api_key = config["juso"]["api_key"]
+juso_api_key = st.secrets.get("juso", {}).get("api_key", "")
 
 # --- DB 연결 ---
-supabase_url = config.get("supabase", {}).get("url", "")
-supabase_key = config.get("supabase", {}).get("key", "")
+supabase_url = st.secrets.get("supabase", {}).get("url", "")
+supabase_key = st.secrets.get("supabase", {}).get("key", "")
 db_conn = (
     get_connection(supabase_url, supabase_key)
     if supabase_url and supabase_key
