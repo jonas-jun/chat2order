@@ -5,10 +5,12 @@ import streamlit as st
 
 from services import (
     parse_custom_jsonl,
+    parse_csv,
     extract_orders_from_chat,
     lookup_zip_code,
     format_phone_number,
     extract_timestamp,
+    extract_chat_name,
 )
 
 # --- 설정 파일 로드 ---
@@ -43,7 +45,12 @@ with col1:
 
 with col2:
     st.subheader("2. 대화 내역 업로드")
-    chat_files = st.file_uploader("order_chat.jsonl 파일들을 업로드하세요.", type=["jsonl", "txt"], accept_multiple_files=True)
+    chat_files = st.file_uploader("대화 파일들을 업로드하세요. (CSV 또는 JSONL)", type=["csv", "jsonl", "txt"], accept_multiple_files=True)
+
+    if chat_files:
+        with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
+            for f in chat_files:
+                st.write(f"• {f.name}")
 
 # 실행 버튼
 if st.button("🚀 주문서 추출 실행", type="primary", use_container_width=True):
@@ -59,20 +66,37 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
             all_extracted_orders = []
 
             for chat_file in chat_files:
-                chat_data = parse_custom_jsonl(chat_file)
-                extracted_data = extract_orders_from_chat(
-                    api_key_input,
-                    catalog_data,
-                    chat_data,
-                    model=config["gemini"]["model"],
-                    temperature=config["gemini"]["temperature"],
-                    prompt_template=config["prompt"]["order_extraction"],
-                )
+                if chat_file.name.endswith(".csv"):
+                    chat_data, ts = parse_csv(
+                        chat_file,
+                        filename_prefix=config["csv"]["filename_prefix"],
+                        exclude_messages=config["csv"]["exclude_messages"],
+                    )
+                else:
+                    chat_data = parse_custom_jsonl(chat_file)
+                    ts = extract_timestamp(chat_file.name)
+
+                try:
+                    extracted_data = extract_orders_from_chat(
+                        api_key_input,
+                        catalog_data,
+                        chat_data,
+                        model=config["gemini"]["model"],
+                        temperature=config["gemini"]["temperature"],
+                        prompt_template=config["prompt"]["order_extraction"],
+                    )
+                except RuntimeError as e:
+                    st.error(str(e))
+                    extracted_data = None
 
                 if extracted_data:
-                    ts = extract_timestamp(chat_file.name)
+                    chat_name = extract_chat_name(
+                        chat_file.name,
+                        filename_prefix=config["csv"]["filename_prefix"] if chat_file.name.endswith(".csv") else "",
+                    )
                     for order in extracted_data:
                         order["time"] = ts
+                        order["chat_name"] = chat_name
                     all_extracted_orders.extend(extracted_data)
 
         if all_extracted_orders:

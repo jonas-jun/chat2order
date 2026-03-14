@@ -1,19 +1,29 @@
 import re
 import ast
 import json
+import io
 import requests
 from datetime import datetime
+from pathlib import Path
 
-import streamlit as st
+import pandas as pd
 from google import genai
 from google.genai import types
 
 from models import OrderItem
 
 
-def parse_custom_jsonl(uploaded_file) -> list:
-    """작은따옴표가 포함된 파이썬 dict 형태의 텍스트 라인을 파싱합니다."""
-    lines = uploaded_file.getvalue().decode("utf-8").splitlines()
+def parse_custom_jsonl(source) -> list:
+    """
+    작은따옴표가 포함된 파이썬 dict 형태의 텍스트 라인을 파싱합니다.
+    source: Streamlit UploadedFile 또는 파일 경로(str/Path)
+    """
+    if isinstance(source, (str, Path)):
+        raw = Path(source).read_bytes()
+    else:
+        raw = source.getvalue()
+
+    lines = raw.decode("utf-8").splitlines()
     data = []
     for line in lines:
         line = line.strip()
@@ -23,7 +33,7 @@ def parse_custom_jsonl(uploaded_file) -> list:
             parsed_dict = ast.literal_eval(line)
             data.append(parsed_dict)
         except Exception as e:
-            st.warning(f"파싱 오류 발생 라인 건너뜀: {line[:30]}... ({e})")
+            print(f"[WARN] 파싱 오류 발생 라인 건너뜀: {line[:30]}... ({e})")
     return data
 
 
@@ -48,8 +58,7 @@ def extract_orders_from_chat(api_key: str, catalog_data: list, chat_data: list, 
         )
         return json.loads(response.text)
     except Exception as e:
-        st.error(f"Gemini API 호출 중 오류가 발생했습니다: {e}")
-        return None
+        raise RuntimeError(f"Gemini API 호출 중 오류가 발생했습니다: {e}") from e
 
 
 def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
@@ -86,9 +95,52 @@ def format_phone_number(phone: str | None) -> str | None:
     return phone
 
 
+def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
+    """
+    파일명에서 채팅명을 추출합니다.
+    - CSV: 다애모드(daae_mode)_<채팅명>.csv
+    - JSONL: <채팅명>_2026-03-12-10-17-22.jsonl
+    """
+    name = Path(filename).stem  # 확장자 제거
+    if filename_prefix and name.startswith(filename_prefix):
+        return name[len(filename_prefix):]
+    # JSONL: 끝의 타임스탬프 패턴 제거
+    return re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name) or None
+
+
 def extract_timestamp(filename: str) -> datetime | None:
     """파일명에서 timestamp를 추출합니다. (예: 김성희_2026-03-12-10-17-22.jsonl)"""
     ts_match = re.search(r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", filename)
     if ts_match:
         return datetime.strptime(ts_match.group(1), "%Y-%m-%d-%H-%M-%S")
     return None
+
+
+def parse_csv(source, filename_prefix: str, exclude_messages: list) -> tuple[list, datetime | None]:
+    """
+    카카오톡 채널 CSV를 파싱하여 (messages, timestamp) 튜플을 반환합니다.
+    source: Streamlit UploadedFile 또는 파일 경로(str/Path)
+    """
+    if isinstance(source, (str, Path)):
+        raw = io.BytesIO(Path(source).read_bytes())
+    else:
+        raw = io.BytesIO(source.getvalue())
+
+    df = pd.read_csv(raw, encoding="utf-8-sig", encoding_errors="replace")
+
+    timestamp = None
+    if "DATE" in df.columns and len(df) > 0:
+        try:
+            timestamp = pd.to_datetime(df.iloc[-1]["DATE"]).to_pydatetime()
+        except Exception:
+            pass
+
+    messages = []
+    for _, row in df.iterrows():
+        user = row.get("USER", "")
+        message = re.sub(r"\s+", " ", str(row.get("MESSAGE", ""))).strip()
+        if any(message.startswith(excl) for excl in exclude_messages):
+            continue
+        messages.append({"user": user, "message": message})
+
+    return messages, timestamp
