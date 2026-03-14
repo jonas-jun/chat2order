@@ -244,6 +244,7 @@ $RECYCLE.BIN/
 *.lnk
 
 config.yaml
+.streamlit/secrets.toml
 
 # Training data DB
 *.db
