@@ -17,7 +17,7 @@ output_columns:
   상품명: product
   옵션명: option
   수량: volume
-  주문자명: chat_name
+  채팅명: chat_name
   수령자: order_name
   전화번호: phone_number
   주소: address
