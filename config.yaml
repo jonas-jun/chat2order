@@ -10,18 +10,18 @@ output:
   file_name: "orders_extracted.xlsx"
   sheet_name: "주문내역"
 
-# 추출 대상 컬럼
-columns:
-  - live_time
-  - time
-  - order_name
-  - chat_name
-  - phone_number
-  - address
-  - zip_code
-  - product
-  - option
-  - volume
+# 출력 칼럼 설정 (출력명: 원본필드명, null이면 빈 칼럼)
+output_columns:
+  주문번호: null
+  바코드: null
+  상품명: product
+  옵션명: option
+  수량: volume
+  주문자명: chat_name
+  수령자: order_name
+  전화번호: phone_number
+  주소: address
+  우편번호: zip_code
 
 # CSV 파싱 설정
 csv:
@@ -48,7 +48,7 @@ prompt:
     지시사항:
     1. 대화 내역에서 주문이 확정된 내역(입금 완료 등)을 위주로 추출해.
     2. 주문이 없는 건은 row에 추가하지 말아줘.
-    3. 상품명(product)은 반드시 카탈로그에 있는 가장 유사한 상품명으로 매핑해.
+    3. 상품명(product)과 옵션(option)은 반드시 카탈로그에 있는 가장 유사한 상품명으로 매핑해.
     4. 색상, 사이즈 등의 옵션(option)이 있다면 분리해서 적고, 수량(volume)은 정수로 적어.
     5. order_name은 배송 받을 실제 이름이야. 고객이 별도로 배송 이름을 알려준 경우에만 적고, 그렇지 않으면 null로 비워둬.
     6. address는 고객이 말한 전체 주소를 그대로 적어.
