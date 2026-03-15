@@ -16,7 +16,7 @@ def save_training_record(
     model_name: str,
     catalog_data: list,
     chat_data: list,
-    response_json: list | dict, 
+    response_json: list | dict,
 ) -> str:
     """학습 데이터 레코드를 Supabase에 저장하고 id를 반환합니다."""
     result = (
