@@ -13,10 +13,11 @@ from google.genai import types
 from models import OrderItem
 
 
-def parse_custom_jsonl(source) -> list:
+def parse_custom_jsonl(source, time_after: datetime | None = None) -> list:
     """
     작은따옴표가 포함된 파이썬 dict 형태의 텍스트 라인을 파싱합니다.
     source: Streamlit UploadedFile 또는 파일 경로(str/Path)
+    time_after: 이 시각 이후의 메시지만 포함합니다. (각 row의 "date" 키 기준)
     """
     if isinstance(source, (str, Path)):
         raw = Path(source).read_bytes()
@@ -31,6 +32,10 @@ def parse_custom_jsonl(source) -> list:
             continue
         try:
             parsed_dict = ast.literal_eval(line)
+            if time_after and "date" in parsed_dict:
+                row_date = pd.to_datetime(parsed_dict["date"])
+                if row_date < time_after:
+                    continue
             data.append(parsed_dict)
         except Exception as e:
             print(f"[WARN] 파싱 오류 발생 라인 건너뜀: {line[:30]}... ({e})")
@@ -124,11 +129,12 @@ def extract_timestamp(filename: str) -> datetime | None:
 
 
 def parse_csv(
-    source, filename_prefix: str, exclude_messages: list
+    source, filename_prefix: str, exclude_messages: list, time_after: datetime | None = None
 ) -> tuple[list, datetime | None]:
     """
     카카오톡 채널 CSV를 파싱하여 (messages, timestamp) 튜플을 반환합니다.
     source: Streamlit UploadedFile 또는 파일 경로(str/Path)
+    time_after: 이 시각 이후의 메시지만 포함합니다.
     """
     if isinstance(source, (str, Path)):
         raw = io.BytesIO(Path(source).read_bytes())
@@ -143,6 +149,10 @@ def parse_csv(
             timestamp = pd.to_datetime(df.iloc[-1]["DATE"]).to_pydatetime()
         except Exception:
             pass
+
+    if time_after and "DATE" in df.columns:
+        df["DATE"] = pd.to_datetime(df["DATE"])
+        df = df[df["DATE"] >= time_after]
 
     messages = []
     for _, row in df.iterrows():

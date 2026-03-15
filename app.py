@@ -1,4 +1,5 @@
 import io
+import datetime
 import yaml
 import pandas as pd
 import streamlit as st
@@ -92,9 +93,24 @@ with col2:
     )
 
     if chat_files:
+        seen_names = set()
+        unique_files = []
+        for f in chat_files:
+            if f.name not in seen_names:
+                seen_names.add(f.name)
+                unique_files.append(f)
+        chat_files = unique_files
         with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
             for f in chat_files:
                 st.write(f"• {f.name}")
+
+st.subheader("3. 라이브쇼핑 시간 입력")
+live_col1, live_col2 = st.columns(2)
+with live_col1:
+    live_date = st.date_input("라이브 날짜")
+with live_col2:
+    live_time_input = st.time_input("라이브 시간")
+live_time = datetime.datetime.combine(live_date, live_time_input)
 
 # 실행 버튼
 if st.button("🚀 주문서 추출 실행", type="primary", use_container_width=True):
@@ -117,9 +133,10 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                         chat_file,
                         filename_prefix=config["csv"]["filename_prefix"],
                         exclude_messages=config["csv"]["exclude_messages"],
+                        time_after=live_time,
                     )
                 else:
-                    chat_data = parse_custom_jsonl(chat_file)
+                    chat_data = parse_custom_jsonl(chat_file, time_after=live_time)
                     ts = extract_timestamp(chat_file.name)
 
                 try:
@@ -157,6 +174,7 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                     for order in extracted_data:
                         order["time"] = ts
                         order["chat_name"] = chat_name
+                        order["live_time"] = live_time
                     all_extracted_orders.extend(extracted_data)
 
         if all_extracted_orders:
