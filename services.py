@@ -2,6 +2,7 @@ import re
 import ast
 import json
 import io
+import unicodedata
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -13,11 +14,16 @@ from google.genai import types
 from models import OrderItem
 
 
-def parse_custom_jsonl(source, time_after: datetime | None = None) -> list:
+def parse_custom_jsonl(
+    source,
+    time_after: datetime | None = None,
+    time_before: datetime | None = None,
+) -> list:
     """
     작은따옴표가 포함된 파이썬 dict 형태의 텍스트 라인을 파싱합니다.
     source: Streamlit UploadedFile 또는 파일 경로(str/Path)
     time_after: 이 시각 이후의 메시지만 포함합니다. (각 row의 "date" 키 기준)
+    time_before: 이 시각 이전의 메시지만 포함합니다.
     """
     if isinstance(source, (str, Path)):
         raw = Path(source).read_bytes()
@@ -32,9 +38,11 @@ def parse_custom_jsonl(source, time_after: datetime | None = None) -> list:
             continue
         try:
             parsed_dict = ast.literal_eval(line)
-            if time_after and "date" in parsed_dict:
+            if (time_after or time_before) and "date" in parsed_dict:
                 row_date = pd.to_datetime(parsed_dict["date"])
-                if row_date < time_after:
+                if time_after and row_date < time_after:
+                    continue
+                if time_before and row_date > time_before:
                     continue
             data.append(parsed_dict)
         except Exception as e:
@@ -51,6 +59,7 @@ def extract_orders_from_chat(
     prompt_template: str,
 ) -> list | None:
     """Gemini API를 호출하여 대화에서 주문 정보를 추출합니다."""
+    api_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
     client = genai.Client(api_key=api_key)
 
     prompt = prompt_template.format(
@@ -70,7 +79,11 @@ def extract_orders_from_chat(
         )
         return json.loads(response.text)
     except Exception as e:
-        raise RuntimeError(f"Gemini API 호출 중 오류가 발생했습니다: {e}") from e
+        import traceback
+        tb = traceback.format_exc()
+        raise RuntimeError(
+            f"Gemini API 호출 중 오류가 발생했습니다: {e}\n\n[Traceback]\n{tb}"
+        ) from e
 
 
 def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
@@ -113,10 +126,11 @@ def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
     - CSV: 다애모드(daae_mode)_<채팅명>.csv
     - JSONL: <채팅명>_2026-03-12-10-17-22.jsonl
     """
-    name = Path(filename).stem  # 확장자 제거
-    if filename_prefix and name.startswith(filename_prefix):
-        return name[len(filename_prefix) :]
-    # JSONL: 끝의 타임스탬프 패턴 제거
+    name = unicodedata.normalize("NFC", Path(filename).stem)
+    if filename_prefix:
+        prefix = unicodedata.normalize("NFC", filename_prefix)
+        if name.startswith(prefix):
+            return name[len(prefix):]
     return re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name) or None
 
 
@@ -129,12 +143,17 @@ def extract_timestamp(filename: str) -> datetime | None:
 
 
 def parse_csv(
-    source, filename_prefix: str, exclude_messages: list, time_after: datetime | None = None
+    source,
+    filename_prefix: str,
+    exclude_messages: list,
+    time_after: datetime | None = None,
+    time_before: datetime | None = None,
 ) -> tuple[list, datetime | None]:
     """
     카카오톡 채널 CSV를 파싱하여 (messages, timestamp) 튜플을 반환합니다.
     source: Streamlit UploadedFile 또는 파일 경로(str/Path)
     time_after: 이 시각 이후의 메시지만 포함합니다.
+    time_before: 이 시각 이전의 메시지만 포함합니다.
     """
     if isinstance(source, (str, Path)):
         raw = io.BytesIO(Path(source).read_bytes())
@@ -150,9 +169,12 @@ def parse_csv(
         except Exception:
             pass
 
-    if time_after and "DATE" in df.columns:
+    if (time_after or time_before) and "DATE" in df.columns:
         df["DATE"] = pd.to_datetime(df["DATE"])
-        df = df[df["DATE"] >= time_after]
+        if time_after:
+            df = df[df["DATE"] >= time_after]
+        if time_before:
+            df = df[df["DATE"] <= time_before]
 
     messages = []
     for _, row in df.iterrows():

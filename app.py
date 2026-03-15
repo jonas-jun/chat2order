@@ -105,12 +105,17 @@ with col2:
                 st.write(f"• {f.name}")
 
 st.subheader("3. 라이브쇼핑 시간 입력")
-live_col1, live_col2 = st.columns(2)
-with live_col1:
-    live_date = st.date_input("라이브 날짜")
-with live_col2:
-    live_time_input = st.time_input("라이브 시간")
-live_time = datetime.datetime.combine(live_date, live_time_input)
+start_col1, start_col2, end_col1, end_col2 = st.columns(4)
+with start_col1:
+    start_date = st.date_input("시작 날짜")
+with start_col2:
+    start_time = st.time_input("시작 시간")
+with end_col1:
+    end_date = st.date_input("종료 날짜", value=start_date)
+with end_col2:
+    end_time = st.time_input("종료 시간", value=datetime.time(23, 59))
+time_after = datetime.datetime.combine(start_date, start_time)
+time_before = datetime.datetime.combine(end_date, end_time)
 
 # 실행 버튼
 if st.button("🚀 주문서 추출 실행", type="primary", use_container_width=True):
@@ -133,10 +138,13 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                         chat_file,
                         filename_prefix=config["csv"]["filename_prefix"],
                         exclude_messages=config["csv"]["exclude_messages"],
-                        time_after=live_time,
+                        time_after=time_after,
+                        time_before=time_before,
                     )
                 else:
-                    chat_data = parse_custom_jsonl(chat_file, time_after=live_time)
+                    chat_data = parse_custom_jsonl(
+                        chat_file, time_after=time_after, time_before=time_before
+                    )
                     ts = extract_timestamp(chat_file.name)
 
                 try:
@@ -174,7 +182,7 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                     for order in extracted_data:
                         order["time"] = ts
                         order["chat_name"] = chat_name
-                        order["live_time"] = live_time
+                        order["live_time"] = time_after
                     all_extracted_orders.extend(extracted_data)
 
         if all_extracted_orders:
@@ -187,7 +195,10 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                         lambda addr: lookup_zip_code(addr, juso_api_key)
                     )
 
-            df = df.reindex(columns=config["columns"])
+            col_map = config["output_columns"]
+            rename = {v: k for k, v in col_map.items() if v}
+            df = df.rename(columns=rename)
+            df = df.reindex(columns=list(col_map.keys()), fill_value="")
 
             st.success("🎉 주문 데이터 추출이 완료되었습니다!")
             st.dataframe(df, use_container_width=True)
