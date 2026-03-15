@@ -18,14 +18,21 @@ def extract_nickname(filepath: str, prefix=PREFIX) -> str:
     return name
 
 
-def convert_df_to_jsonl(df: pd.DataFrame, exclude_messages: list = list()):
+def convert_df_to_jsonl(df: pd.DataFrame, time_after: str=None, exclude_messages: list=list()):
     messages = list()
+
+    if time_after:
+        df["DATE"] = pd.to_datetime(df["DATE"])
+        time_after_dt = pd.to_datetime(time_after)
+        df = df[df["DATE"] >= time_after_dt]
+    
     for i, data in df.iterrows():
         user = data["USER"]
         message = data["MESSAGE"]
+        date = data["DATE"]
         if any(message.startswith(msg) for msg in exclude_messages):
             continue
-        messages.append({"user": user, "message": message})
+        messages.append({"user": user, "message": message, "date": date})
     return messages
 
 

@@ -12,6 +12,7 @@ output:
 
 # 추출 대상 컬럼
 columns:
+  - live_time
   - time
   - order_name
   - chat_name
