@@ -80,6 +80,7 @@ def extract_orders_from_chat(
         return json.loads(response.text)
     except Exception as e:
         import traceback
+
         tb = traceback.format_exc()
         raise RuntimeError(
             f"Gemini API 호출 중 오류가 발생했습니다: {e}\n\n[Traceback]\n{tb}"
@@ -130,7 +131,7 @@ def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
     if filename_prefix:
         prefix = unicodedata.normalize("NFC", filename_prefix)
         if name.startswith(prefix):
-            return name[len(prefix):]
+            return name[len(prefix) :]
     return re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name) or None
 
 
