@@ -12,8 +12,7 @@ output:
 
 # 출력 칼럼 설정 (출력명: 원본필드명, null이면 빈 칼럼)
 output_columns:
-  주문번호: null
-  바코드: null
+  주문번호: order_number
   상품명: product
   옵션명: option
   수량: volume

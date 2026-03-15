@@ -132,6 +132,8 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
             catalog_data = parse_custom_jsonl(catalog_file)
             all_extracted_orders = []
 
+            today_str = datetime.date.today().strftime("%Y%m%d")
+            seq = 1
             for chat_file in chat_files:
                 if chat_file.name.endswith(".csv"):
                     chat_data, ts = parse_csv(
@@ -179,11 +181,14 @@ if st.button("🚀 주문서 추출 실행", type="primary", use_container_width
                             else ""
                         ),
                     )
+                    order_number = f"{today_str}{seq:03d}"
                     for order in extracted_data:
                         order["time"] = ts
                         order["chat_name"] = chat_name
                         order["live_time"] = time_after
+                        order["order_number"] = order_number
                     all_extracted_orders.extend(extracted_data)
+                    seq += 1
 
         if all_extracted_orders:
             df = pd.DataFrame(all_extracted_orders)
