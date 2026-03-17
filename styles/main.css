@@ -1,0 +1,75 @@
+/* 메인 헤더 영역 */
+.main-header {
+    background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+    padding: 2rem;
+    border-radius: 12px;
+    color: white;
+    margin-bottom: 2rem;
+}
+.main-header h1 { color: white; margin: 0; font-size: 2rem; }
+.main-header p { color: rgba(255,255,255,0.9); margin: 0.5rem 0 0; }
+
+/* 카드 스타일 업로드 영역 */
+.upload-card {
+    background: white;
+    border: 1px solid #E8E8E8;
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+
+/* 스텝 인디케이터 */
+.step-badge {
+    background: #FF6B35;
+    color: white;
+    border-radius: 50%;
+    width: 28px; height: 28px;
+    display: inline-flex;
+    align-items: center; justify-content: center;
+    font-weight: bold; font-size: 14px;
+    margin-right: 8px;
+}
+
+/* 파일 업로더 개선 */
+[data-testid="stFileUploader"] {
+    border: 2px dashed #FFB088;
+    border-radius: 12px;
+    padding: 1rem;
+    background: #FFF9F6;
+}
+
+/* 버튼 스타일 */
+.stButton > button[kind="primary"] {
+    background: linear-gradient(135deg, #FF6B35, #F7931E);
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 2rem;
+    font-weight: 600;
+    transition: transform 0.2s;
+}
+.stButton > button[kind="primary"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255,107,53,0.4);
+}
+
+/* 사이드바 */
+[data-testid="stSidebar"] {
+    background: #1A1A2E;
+}
+[data-testid="stSidebar"] * { color: #E8E8E8; }
+[data-testid="stSidebar"] input {
+    color: #1A1A2E !important;
+}
+[data-testid="stSidebar"] .stButton > button {
+    background: transparent;
+    border: 1px solid #E8E8E8;
+    color: #E8E8E8;
+}
+[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(255,255,255,0.1);
+    border-color: #FF6B35;
+    color: #FF6B35;
+}
+
+/* 데이터프레임 래퍼 */
+.stDataFrame { border-radius: 12px; overflow: hidden; }
