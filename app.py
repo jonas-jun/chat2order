@@ -12,6 +12,7 @@ from services import (
     extract_orders_from_chat,
     lookup_zip_code,
     format_phone_number,
+    normalize_zip_code,
     extract_chat_name,
 )
 from database import get_connection, save_training_record
@@ -225,11 +226,14 @@ with tab_order:
             if all_extracted_orders:
                 df = pd.DataFrame(all_extracted_orders)
                 df["phone_number"] = df["phone_number"].apply(format_phone_number)
+                if "zip_code" in df.columns:
+                    df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
                 if juso_api_key:
                     df["zip_code"] = df["search_address"].apply(
                         lambda addr: lookup_zip_code(addr, juso_api_key)
                     )
+                    df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
                 col_map = config["output_columns"]
                 rename = {v: k for k, v in col_map.items() if v}
@@ -245,6 +249,16 @@ with tab_order:
                     df.to_excel(
                         writer, index=False, sheet_name=config["output"]["sheet_name"]
                     )
+                    worksheet = writer.sheets[config["output"]["sheet_name"]]
+                    if "우편번호" in df.columns:
+                        zip_col_idx = df.columns.get_loc("우편번호") + 1
+                        for row in worksheet.iter_rows(
+                            min_row=2,
+                            max_row=worksheet.max_row,
+                            min_col=zip_col_idx,
+                            max_col=zip_col_idx,
+                        ):
+                            row[0].number_format = "@"
 
                 st.download_button(
                     label="📥 엑셀 파일(.xlsx) 다운로드",

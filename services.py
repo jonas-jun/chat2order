@@ -121,6 +121,25 @@ def format_phone_number(phone: str | None) -> str | None:
     return phone
 
 
+def normalize_zip_code(zip_code: object) -> str:
+    """우편번호를 문자열(5자리)로 정규화합니다."""
+    if zip_code is None or pd.isna(zip_code):
+        return ""
+
+    raw = str(zip_code).strip()
+    if not raw:
+        return ""
+
+    digits = re.sub(r"\D", "", raw)
+    if not digits:
+        return raw
+
+    if len(digits) <= 5:
+        return digits.zfill(5)
+
+    return digits
+
+
 def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
     """
     파일명에서 채팅명을 추출합니다.

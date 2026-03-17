@@ -17,6 +17,7 @@ from services import (
     extract_orders_from_chat,
     lookup_zip_code,
     format_phone_number,
+    normalize_zip_code,
     extract_timestamp,
     extract_chat_name,
 )
@@ -111,6 +112,8 @@ def main():
 
     df = pd.DataFrame(all_extracted_orders)
     df["phone_number"] = df["phone_number"].apply(format_phone_number)
+    if "zip_code" in df.columns:
+        df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
     juso_api_key = config["juso"]["api_key"]
     if juso_api_key:
@@ -118,6 +121,7 @@ def main():
         df["zip_code"] = df["search_address"].apply(
             lambda addr: lookup_zip_code(addr, juso_api_key)
         )
+        df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
     df = df.reindex(columns=config["columns"])
 
@@ -126,6 +130,18 @@ def main():
         output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
     ) as writer:
         df.to_excel(writer, index=False, sheet_name=config["output"]["sheet_name"])
+        worksheet = writer.sheets[config["output"]["sheet_name"]]
+        for zip_col_name in ("우편번호", "zip_code"):
+            if zip_col_name in df.columns:
+                zip_col_idx = df.columns.get_loc(zip_col_name) + 1
+                for row in worksheet.iter_rows(
+                    min_row=2,
+                    max_row=worksheet.max_row,
+                    min_col=zip_col_idx,
+                    max_col=zip_col_idx,
+                ):
+                    row[0].number_format = "@"
+                break
 
     Path(output_path).write_bytes(output.getvalue())
     print(f"[INFO] 완료: {output_path} ({len(df)}건)")
