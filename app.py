@@ -1,6 +1,7 @@
 import io
 import json
 import datetime
+from pathlib import Path
 import yaml
 import pandas as pd
 import streamlit as st
@@ -13,6 +14,7 @@ from services import (
     lookup_zip_code,
     format_phone_number,
     normalize_zip_code,
+    batch_lookup_zip_codes,
     extract_chat_name,
 )
 from database import get_connection, save_training_record
@@ -94,7 +96,9 @@ with st.sidebar:
     st.markdown("[API Key 발급받기](https://aistudio.google.com/app/apikey)")
 
 # --- 탭 구성 ---
-tab_order, tab_catalog = st.tabs(["📦 주문서 추출", "📋 카탈로그 생성"])
+tab_order, tab_catalog, tab_zipcode = st.tabs(
+    ["📦 주문서 추출", "📋 카탈로그 생성", "📮 우편번호 추출"]
+)
 
 # ===== 탭 1: 주문서 추출 (기존 기능) =====
 with tab_order:
@@ -339,3 +343,122 @@ with tab_catalog:
             type="primary",
             use_container_width=True,
         )
+
+# ===== 탭 3: 우편번호 추출 =====
+with tab_zipcode:
+    st.markdown(
+        '<span class="step-badge">1</span> **엑셀 파일 업로드**',
+        unsafe_allow_html=True,
+    )
+    zip_excel_file = st.file_uploader(
+        "주소 컬럼이 포함된 엑셀 파일을 업로드하세요.",
+        type=["xlsx", "xls"],
+        key="zip_excel_uploader",
+    )
+
+    if zip_excel_file:
+        zip_df = pd.read_excel(zip_excel_file)
+        if "주소" not in zip_df.columns:
+            st.error(
+                f"'주소' 컬럼을 찾을 수 없습니다. 발견된 컬럼: {list(zip_df.columns)}"
+            )
+        else:
+            st.markdown(
+                '<span class="step-badge">2</span> **미리보기**',
+                unsafe_allow_html=True,
+            )
+            has_zip_col = "우편번호" in zip_df.columns
+            if has_zip_col:
+                st.info(
+                    "파일에 이미 '우편번호' 컬럼이 있습니다. 조회 결과로 덮어씁니다."
+                )
+            st.dataframe(zip_df.head(10), use_container_width=True)
+            st.caption(f"총 {len(zip_df)}건")
+
+            if st.button(
+                "📮 우편번호 조회 실행",
+                type="primary",
+                use_container_width=True,
+                key="zip_lookup_btn",
+            ):
+                if not api_key_input:
+                    st.warning("왼쪽 사이드바에 Gemini API Key를 입력해 주세요.")
+                elif not juso_api_key:
+                    st.warning("도로명주소 API 키가 설정되지 않았습니다.")
+                else:
+                    with st.status("우편번호 조회 중입니다", expanded=True) as zstatus:
+                        progress_text = st.empty()
+                        progress_bar = st.progress(0)
+                        total = len(zip_df)
+
+                        def _progress(idx, total_count):
+                            pct = min((idx + 1) / total_count, 1.0)
+                            progress_bar.progress(pct)
+                            progress_text.write(
+                                f"📮 우편번호 조회 중... ({idx + 1}/{total_count})"
+                            )
+
+                        result_series = batch_lookup_zip_codes(
+                            df=zip_df,
+                            address_col="주소",
+                            juso_api_key=juso_api_key,
+                            api_key=api_key_input,
+                            model=config["gemini"]["model"],
+                            temperature=config["gemini"]["temperature"],
+                            prompt_template=config["prompt"].get(
+                                "address_to_search", ""
+                            ),
+                            progress_callback=_progress,
+                        )
+                        if has_zip_col:
+                            zip_df["우편번호"] = result_series
+                        else:
+                            addr_pos = zip_df.columns.get_loc("주소")
+                            zip_df.insert(addr_pos + 1, "우편번호", result_series)
+
+                        found = (zip_df["우편번호"] != "").sum()
+                        zstatus.update(
+                            label=f"🎉 우편번호 조회 완료! ({found}/{total}건 성공)",
+                            state="complete",
+                        )
+
+                    st.markdown(
+                        '<span class="step-badge">3</span> **결과 확인 및 다운로드**',
+                        unsafe_allow_html=True,
+                    )
+
+                    found = (zip_df["우편번호"] != "").sum()
+                    missed = total - found
+                    stat_cols = st.columns(3)
+                    with stat_cols[0]:
+                        st.metric("전체", total)
+                    with stat_cols[1]:
+                        st.metric("성공", found)
+                    with stat_cols[2]:
+                        st.metric("미조회", missed)
+
+                    st.dataframe(zip_df, use_container_width=True)
+
+                    zip_output = io.BytesIO()
+                    with pd.ExcelWriter(zip_output, engine="openpyxl") as zwriter:
+                        zip_df.to_excel(zwriter, index=False, sheet_name="Sheet1")
+                        zws = zwriter.sheets["Sheet1"]
+                        if "우편번호" in zip_df.columns:
+                            zcol = zip_df.columns.get_loc("우편번호") + 1
+                            for row in zws.iter_rows(
+                                min_row=2,
+                                max_row=zws.max_row,
+                                min_col=zcol,
+                                max_col=zcol,
+                            ):
+                                row[0].number_format = "@"
+
+                    original_name = Path(zip_excel_file.name).stem
+                    st.download_button(
+                        label="📥 엑셀 파일(.xlsx) 다운로드",
+                        data=zip_output.getvalue(),
+                        file_name=f"{original_name}_우편번호.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        key="zip_download_btn",
+                    )
