@@ -140,6 +140,84 @@ def normalize_zip_code(zip_code: object) -> str:
     return digits
 
 
+def extract_search_address(
+    api_key: str,
+    address: str,
+    model: str,
+    temperature: float,
+    prompt_template: str,
+) -> str | None:
+    """Gemini로 단일 주소에서 우편번호 검색용 도로명주소를 추출합니다."""
+    api_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
+    client = genai.Client(api_key=api_key)
+
+    prompt = prompt_template.format(address=address)
+
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=str | None,
+                temperature=temperature,
+            ),
+        )
+        result = json.loads(response.text)
+        return result if isinstance(result, str) and result.strip() else None
+    except Exception:
+        return None
+
+
+def batch_lookup_zip_codes(
+    df: pd.DataFrame,
+    address_col: str,
+    juso_api_key: str,
+    api_key: str = "",
+    model: str = "",
+    temperature: float = 0.1,
+    prompt_template: str = "",
+    progress_callback=None,
+) -> pd.Series:
+    """
+    주소 컬럼으로 우편번호를 일괄 조회합니다.
+    동일 주소는 한 번만 조회하고 결과를 재사용합니다.
+    1차: 도로명주소 API 직접 조회
+    2차(실패 건): Gemini로 주소 정제 후 재조회
+    """
+    addr_to_zip: dict[str, str] = {}
+    unique_addrs = []
+    for addr in df[address_col]:
+        addr_str = str(addr).strip() if pd.notna(addr) else ""
+        if addr_str and addr_str not in addr_to_zip:
+            addr_to_zip[addr_str] = ""
+            unique_addrs.append(addr_str)
+
+    total = len(unique_addrs)
+    use_gemini = bool(api_key and prompt_template)
+
+    for i, addr in enumerate(unique_addrs):
+        result = lookup_zip_code(addr, juso_api_key)
+        if not result and use_gemini:
+            search_addr = extract_search_address(
+                api_key,
+                addr,
+                model,
+                temperature,
+                prompt_template,
+            )
+            if search_addr:
+                result = lookup_zip_code(search_addr, juso_api_key)
+        if result:
+            addr_to_zip[addr] = normalize_zip_code(result)
+        if progress_callback:
+            progress_callback(i, total)
+
+    return df[address_col].apply(
+        lambda a: addr_to_zip.get(str(a).strip(), "") if pd.notna(a) else ""
+    )
+
+
 def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
     """
     파일명에서 채팅명을 추출합니다.
