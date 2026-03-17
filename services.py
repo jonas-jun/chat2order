@@ -143,6 +143,64 @@ def extract_timestamp(filename: str) -> datetime | None:
     return None
 
 
+def generate_catalog_from_csv(source) -> dict:
+    """
+    stk_forInOut CSV에서 상품명-옵션 매핑을 추출하여 카탈로그 dict를 생성합니다.
+    반환: {"상품명A": ["옵션1", "옵션2"], "상품명B": ["단일상품"], ...}
+    """
+    if isinstance(source, (str, Path)):
+        raw = io.BytesIO(Path(source).read_bytes())
+    else:
+        raw = io.BytesIO(source.getvalue())
+
+    for encoding in ("utf-8-sig", "cp949", "euc-kr"):
+        try:
+            raw.seek(0)
+            df = pd.read_csv(raw, encoding=encoding, encoding_errors="strict")
+            break
+        except (UnicodeDecodeError, LookupError):
+            continue
+    else:
+        raw.seek(0)
+        df = pd.read_csv(raw, encoding="utf-8", encoding_errors="replace")
+
+    if "상품명" not in df.columns or "옵션내용" not in df.columns:
+        raise ValueError(
+            "CSV에 '상품명'과 '옵션내용' 컬럼이 필요합니다. "
+            f"발견된 컬럼: {list(df.columns)}"
+        )
+
+    catalog: dict[str, list[str]] = {}
+    for _, row in df.iterrows():
+        product = str(row["상품명"]).strip()
+        option = str(row["옵션내용"]).strip()
+        if not product or product == "nan":
+            continue
+        if product not in catalog:
+            catalog[product] = []
+        if option and option != "nan" and option not in catalog[product]:
+            catalog[product].append(option)
+
+    return catalog
+
+
+def parse_catalog_json(source) -> list:
+    """
+    {상품명: [옵션...]} 형태의 JSON 카탈로그를 파싱하여
+    기존 JSONL 형식과 호환되는 list[dict] 형태로 반환합니다.
+    """
+    if isinstance(source, (str, Path)):
+        raw = Path(source).read_bytes()
+    else:
+        raw = source.getvalue()
+
+    catalog_dict = json.loads(raw.decode("utf-8"))
+    return [
+        {"상품명": product, "옵션": options}
+        for product, options in catalog_dict.items()
+    ]
+
+
 def parse_csv(
     source,
     filename_prefix: str,
