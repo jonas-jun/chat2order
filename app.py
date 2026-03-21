@@ -204,18 +204,27 @@ with tab_order:
                                 chat_data=chat_data,
                                 response_json=extracted_data,
                             )
-                        chat_name = extract_chat_name(
-                            chat_file.name,
-                            filename_prefix=config["csv"]["filename_prefix"],
-                        )
-                        order_number = f"{today_str}{seq:03d}"
-                        for order in extracted_data:
-                            order["time"] = ts
-                            order["chat_name"] = chat_name
-                            order["live_time"] = time_after
-                            order["order_number"] = order_number
-                        all_extracted_orders.extend(extracted_data)
-                        seq += 1
+                        items = extracted_data.get("items", [])
+                        if items:
+                            chat_name = extract_chat_name(
+                                chat_file.name,
+                                filename_prefix=config["csv"]["filename_prefix"],
+                            )
+                            order_number = f"{today_str}{seq:03d}"
+                            for item in items:
+                                row = {
+                                    **item,
+                                    "order_name": extracted_data.get("order_name"),
+                                    "phone_number": extracted_data.get("phone_number"),
+                                    "address": extracted_data.get("address"),
+                                    "search_address": extracted_data.get("search_address"),
+                                    "time": ts,
+                                    "chat_name": chat_name,
+                                    "live_time": time_after,
+                                    "order_number": order_number,
+                                }
+                                all_extracted_orders.append(row)
+                            seq += 1
 
                     progress_bar.progress((i + 1) / total_files)
                     progress_text.write(f"💬 채팅 내역 분석 중 ({i + 1}/{total_files})")

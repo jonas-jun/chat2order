@@ -94,17 +94,26 @@ def main():
             continue
 
         if extracted_data:
-            chat_name = extract_chat_name(
-                p.name,
-                filename_prefix=(
-                    config["csv"]["filename_prefix"] if p.suffix == ".csv" else ""
-                ),
-            )
-            for order in extracted_data:
-                order["time"] = ts
-                order["chat_name"] = chat_name
-            all_extracted_orders.extend(extracted_data)
-            print(f"[INFO] {len(extracted_data)}건 추출 완료")
+            items = extracted_data.get("items", [])
+            if items:
+                chat_name = extract_chat_name(
+                    p.name,
+                    filename_prefix=(
+                        config["csv"]["filename_prefix"] if p.suffix == ".csv" else ""
+                    ),
+                )
+                for item in items:
+                    row = {
+                        **item,
+                        "order_name": extracted_data.get("order_name"),
+                        "phone_number": extracted_data.get("phone_number"),
+                        "address": extracted_data.get("address"),
+                        "search_address": extracted_data.get("search_address"),
+                        "time": ts,
+                        "chat_name": chat_name,
+                    }
+                    all_extracted_orders.append(row)
+                print(f"[INFO] {len(items)}건 추출 완료")
 
     if not all_extracted_orders:
         print("[WARN] 추출된 주문 데이터가 없습니다.")
