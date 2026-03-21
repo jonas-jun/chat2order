@@ -11,7 +11,7 @@ import pandas as pd
 from google import genai
 from google.genai import types
 
-from models import OrderItem
+from models import OrderExtractionResult
 
 
 def parse_custom_jsonl(
@@ -57,7 +57,7 @@ def extract_orders_from_chat(
     model: str,
     temperature: float,
     prompt_template: str,
-) -> list | None:
+) -> dict | None:
     """Gemini API를 호출하여 대화에서 주문 정보를 추출합니다."""
     api_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
     client = genai.Client(api_key=api_key)
@@ -73,7 +73,7 @@ def extract_orders_from_chat(
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                response_schema=list[OrderItem],
+                response_schema=OrderExtractionResult,
                 temperature=temperature,
             ),
         )
