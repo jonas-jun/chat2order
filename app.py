@@ -118,10 +118,13 @@ with tab_order:
             '<span class="step-badge">2</span> **대화 내역 업로드**',
             unsafe_allow_html=True,
         )
+        if "chat_uploader_key" not in st.session_state:
+            st.session_state["chat_uploader_key"] = 0
         chat_files = st.file_uploader(
             "카카오톡 대화 파일들을 업로드하세요.",
             type=["csv"],
             accept_multiple_files=True,
+            key=f"chat_uploader_{st.session_state['chat_uploader_key']}",
         )
 
         if chat_files:
@@ -135,6 +138,9 @@ with tab_order:
             with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
                 for f in chat_files:
                     st.write(f"• {f.name}")
+            if st.button("❌ 업로드 파일 전체 삭제", key="clear_chat_files"):
+                st.session_state["chat_uploader_key"] += 1
+                st.rerun()
 
     st.markdown(
         '<span class="step-badge">3</span> **라이브쇼핑 시간 입력**',
