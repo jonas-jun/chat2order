@@ -29,7 +29,7 @@ def load_config(path: str = "config.yaml") -> dict:
         return yaml.safe_load(f)
 
 
-def load_llm_config(path: str = ".streamlit/llm.toml") -> dict:
+def load_secrets(path: str = ".streamlit/secrets.toml") -> dict:
     with open(path, "rb") as f:
         return tomllib.load(f)
 
@@ -64,7 +64,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
-    llm_config = load_llm_config()
+    secrets = load_secrets()
     output_path = args.output or config["output"]["file_name"]
 
     print(f"[INFO] 카탈로그 파싱 중: {args.catalog}")
@@ -94,7 +94,7 @@ def main():
                 chat_data,
                 model=config["gemini"]["model"],
                 temperature=config["gemini"]["temperature"],
-                prompt_template=llm_config["prompt"]["order_extraction"],
+                prompt_template=secrets["prompt"]["order_extraction"],
             )
         except RuntimeError as e:
             print(f"[ERROR] {e}")

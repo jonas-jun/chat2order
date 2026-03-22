@@ -26,8 +26,7 @@ MarketMate_Chat2Order/
 │   └── main.css                  # Streamlit 커스텀 CSS
 └── .streamlit/
     ├── config.toml               # Streamlit 테마 설정
-    ├── secrets.toml              # 인증 정보 (API 키, DB 접속, 테스터 계정)
-    └── llm.toml                  # LLM 비공개 설정 (프롬프트 등)
+    └── secrets.toml              # 비공개 설정 (API 키, DB 접속, 테스터 계정, 프롬프트)
 ```
 
 ---

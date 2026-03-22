@@ -1,7 +1,6 @@
 import io
 import json
 import datetime
-import tomllib
 from pathlib import Path
 import yaml
 import pandas as pd
@@ -69,8 +68,6 @@ with st.sidebar:
 # --- 설정 파일 로드 ---
 with open("config.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
-with open(".streamlit/llm.toml", "rb") as f:
-    llm_config = tomllib.load(f)
 
 st.markdown(
     "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",
@@ -190,7 +187,7 @@ with tab_order:
                             chat_data,
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
-                            prompt_template=llm_config["prompt"]["order_extraction"],
+                            prompt_template=st.secrets["prompt"]["order_extraction"],
                         )
                     except RuntimeError as e:
                         st.error(str(e))
@@ -419,7 +416,7 @@ with tab_zipcode:
                             api_key=api_key_input,
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
-                            prompt_template=llm_config.get("prompt", {}).get(
+                            prompt_template=st.secrets.get("prompt", {}).get(
                                 "address_to_search", ""
                             ),
                             progress_callback=_progress,
