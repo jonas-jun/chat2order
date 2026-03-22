@@ -74,14 +74,6 @@ python3 main.py \
 | `csv.filename_prefix` | 카카오톡 채널 CSV 파일명 접두사 |
 | `csv.exclude_messages` | 파싱 시 제외할 시스템 메시지 목록 |
 
-### `.streamlit/llm.toml` (비공개)
-
-| 항목 | 설명 |
-|---|---|
-| `prompt.order_extraction` | 주문 추출 프롬프트 템플릿 (`{catalog}`, `{chat}` 플레이스홀더) |
-| `prompt.order_extraction2` | 주문 추출 프롬프트 v2 |
-| `prompt.address_to_search` | 도로명주소 추출 프롬프트 (`{address}` 플레이스홀더) |
-
 ### `.streamlit/secrets.toml` (비공개)
 
 | 항목 | 설명 |
@@ -90,6 +82,9 @@ python3 main.py \
 | `juso.api_key` | 행정안전부 도로명주소 API 키 (우편번호 자동 조회용) |
 | `supabase.url` | Supabase 프로젝트 URL |
 | `supabase.key` | Supabase API 키 |
+| `prompt.order_extraction` | 주문 추출 프롬프트 템플릿 (`{catalog}`, `{chat}` 플레이스홀더) |
+| `prompt.order_extraction2` | 주문 추출 프롬프트 v2 |
+| `prompt.address_to_search` | 도로명주소 추출 프롬프트 (`{address}` 플레이스홀더) |
 
 ---
 
@@ -186,5 +181,5 @@ Excel 출력 (.xlsx)
 
 ## 보안 유의사항
 
-- `.streamlit/secrets.toml`과 `.streamlit/llm.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다.
+- `.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (API 키, 인증 정보, 프롬프트 포함)
 - 실제 고객 개인정보(이름, 연락처, 주소)가 포함된 원본 데이터는 프로토타입 환경에 업로드하지 마세요.
