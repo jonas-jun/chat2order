@@ -19,12 +19,15 @@ MarketMate_Chat2Order/
 ├── services.py                   # 핵심 비즈니스 로직 (파싱, LLM 호출, 후처리)
 ├── models.py                     # Pydantic 데이터 모델
 ├── database.py                   # Supabase 연동 (학습 데이터 저장)
-├── config.yaml                   # 설정 파일 (모델, 프롬프트, 출력 컬럼 등)
+├── config.yaml                   # 공개 설정 파일 (모델, 출력 컬럼, CSV 파싱 등)
 ├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
 ├── requirements.txt
+├── styles/
+│   └── main.css                  # Streamlit 커스텀 CSS
 └── .streamlit/
     ├── config.toml               # Streamlit 테마 설정
-    └── secrets.toml              # 인증 정보 (API 키, DB 접속 등)
+    ├── secrets.toml              # 인증 정보 (API 키, DB 접속, 테스터 계정)
+    └── llm.toml                  # LLM 비공개 설정 (프롬프트 등)
 ```
 
 ---
@@ -60,7 +63,7 @@ python3 main.py \
 
 ## 설정
 
-### `config.yaml`
+### `config.yaml` (공개)
 
 | 항목 | 설명 |
 |---|---|
@@ -71,9 +74,16 @@ python3 main.py \
 | `output_columns` | 출력 컬럼 매핑 (출력명: 원본필드명) |
 | `csv.filename_prefix` | 카카오톡 채널 CSV 파일명 접두사 |
 | `csv.exclude_messages` | 파싱 시 제외할 시스템 메시지 목록 |
-| `prompt.order_extraction` | Gemini에 전달할 프롬프트 템플릿 (`{catalog}`, `{chat}` 플레이스홀더 사용) |
 
-### `.streamlit/secrets.toml`
+### `.streamlit/llm.toml` (비공개)
+
+| 항목 | 설명 |
+|---|---|
+| `prompt.order_extraction` | 주문 추출 프롬프트 템플릿 (`{catalog}`, `{chat}` 플레이스홀더) |
+| `prompt.order_extraction2` | 주문 추출 프롬프트 v2 |
+| `prompt.address_to_search` | 도로명주소 추출 프롬프트 (`{address}` 플레이스홀더) |
+
+### `.streamlit/secrets.toml` (비공개)
 
 | 항목 | 설명 |
 |---|---|
@@ -88,7 +98,7 @@ python3 main.py \
 
 1. 로그인
 2. 사이드바에서 Gemini API Key 입력
-3. 카탈로그 파일(`.jsonl`) 업로드
+3. 카탈로그 파일(`.json`) 업로드
 4. 대화 내역 파일(`.csv` 또는 `.jsonl`) 업로드 (여러 파일 가능)
 5. 라이브쇼핑 시간 범위 지정
 6. "주문서 추출 실행" 클릭
@@ -177,5 +187,5 @@ Excel 출력 (.xlsx)
 
 ## 보안 유의사항
 
-- `.streamlit/secrets.toml`에 API 키와 인증 정보가 포함되므로 `.gitignore`에 등록되어 있습니다.
+- `.streamlit/secrets.toml`과 `.streamlit/llm.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다.
 - 실제 고객 개인정보(이름, 연락처, 주소)가 포함된 원본 데이터는 프로토타입 환경에 업로드하지 마세요.
