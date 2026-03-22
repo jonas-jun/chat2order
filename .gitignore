@@ -244,6 +244,7 @@ $RECYCLE.BIN/
 *.lnk
 
 .streamlit/secrets.toml
+.streamlit/llm.toml
 
 # Training data DB
 *.db
