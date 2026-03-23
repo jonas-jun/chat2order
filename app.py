@@ -19,6 +19,7 @@ from services import (
 )
 from database import (
     get_connection,
+    authenticate_user,
     create_extraction_job,
     update_extraction_job_total,
     save_extracted_orders,
@@ -33,8 +34,19 @@ st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide"
 with open("styles/main.css", encoding="utf-8") as css_file:
     st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
 
+# --- DB 연결 (로그인 전에 초기화 필요) ---
+supabase_url = st.secrets.get("supabase", {}).get("url", "")
+supabase_key = st.secrets.get("supabase", {}).get("key", "")
+db_conn = (
+    get_connection(supabase_url, supabase_key)
+    if supabase_url and supabase_key
+    else None
+)
+
 if "logged_in_user" not in st.session_state:
     st.session_state["logged_in_user"] = None
+if "api_key" not in st.session_state:
+    st.session_state["api_key"] = None
 
 if not st.session_state["logged_in_user"]:
     col_left, col_center, col_right = st.columns([1, 2, 1])
@@ -56,12 +68,20 @@ if not st.session_state["logged_in_user"]:
             )
 
             if submit_button:
-                tester_accounts = st.secrets.get("tester_accounts", {})
-                if email in tester_accounts and str(tester_accounts[email]) == password:
-                    st.session_state["logged_in_user"] = email
-                    st.rerun()
+                if not db_conn:
+                    st.error("DB 연결이 설정되지 않았습니다. 관리자에게 문의하세요.")
                 else:
-                    st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
+                    api_key = authenticate_user(
+                        db_conn, user_id=email, password=password
+                    )
+                    if api_key:
+                        st.session_state["api_key"] = api_key
+                        st.session_state["logged_in_user"] = email
+                        st.rerun()
+                    else:
+                        st.error(
+                            "이메일/비밀번호가 올바르지 않거나 비활성화된 계정입니다."
+                        )
     st.stop()  # 로그인되지 않은 경우 아래 메인 앱 코드 실행 방지
 
 # 로그인된 사용자 표시 및 로그아웃 버튼 (사이드바)
@@ -88,20 +108,13 @@ st.markdown(
 
 juso_api_key = st.secrets.get("juso", {}).get("api_key", "")
 
-# --- DB 연결 ---
-supabase_url = st.secrets.get("supabase", {}).get("url", "")
-supabase_key = st.secrets.get("supabase", {}).get("key", "")
-db_conn = (
-    get_connection(supabase_url, supabase_key)
-    if supabase_url and supabase_key
-    else None
-)
-
-# 사이드바: API 키 입력
+# 사이드바: API 키 상태 표시
 with st.sidebar:
-    st.header("설정")
-    api_key_input = st.text_input("Gemini API Key를 입력하세요", type="password")
-    st.markdown("[API Key 발급받기](https://aistudio.google.com/app/apikey)")
+    st.header("Account State")
+    if st.session_state.get("api_key"):
+        st.success("✅ 관리자 승인 완료")  # gemini api key 연동 완료
+    else:
+        st.error("❌ API Key 연동 실패")
 
 # --- 탭 구성 ---
 tab_order, tab_catalog, tab_zipcode, tab_history = st.tabs(
@@ -183,8 +196,8 @@ with tab_order:
     time_before = datetime.datetime.combine(end_date, end_time)
 
     if st.button("🚀 주문서 추출 실행", type="primary", use_container_width=True):
-        if not api_key_input:
-            st.warning("왼쪽 사이드바에 Gemini API Key를 입력해 주세요.")
+        if not st.session_state.get("api_key"):
+            st.warning("API Key가 할당되지 않았습니다. 관리자에게 문의하세요.")
         elif not catalog_file:
             st.warning("카탈로그 파일을 업로드해 주세요.")
         elif not chat_files:
@@ -224,7 +237,7 @@ with tab_order:
 
                     try:
                         extracted_data = extract_orders_from_chat(
-                            api_key_input,
+                            st.session_state["api_key"],
                             catalog_data,
                             chat_data,
                             model=config["gemini"]["model"],
@@ -446,8 +459,8 @@ with tab_zipcode:
                 use_container_width=True,
                 key="zip_lookup_btn",
             ):
-                if not api_key_input:
-                    st.warning("왼쪽 사이드바에 Gemini API Key를 입력해 주세요.")
+                if not st.session_state.get("api_key"):
+                    st.warning("API Key가 할당되지 않았습니다. 관리자에게 문의하세요.")
                 elif not juso_api_key:
                     st.warning("도로명주소 API 키가 설정되지 않았습니다.")
                 else:
@@ -467,7 +480,7 @@ with tab_zipcode:
                             df=zip_df,
                             address_col="주소",
                             juso_api_key=juso_api_key,
-                            api_key=api_key_input,
+                            api_key=st.session_state["api_key"],
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
                             prompt_template=st.secrets.get("prompt", {}).get(
@@ -566,7 +579,11 @@ with tab_history:
             else:
                 hist_df = pd.DataFrame(orders)
                 hist_df = hist_df.drop(
-                    columns=[c for c in ["id", "job_id", "created_at"] if c in hist_df.columns]
+                    columns=[
+                        c
+                        for c in ["id", "job_id", "created_at"]
+                        if c in hist_df.columns
+                    ]
                 )
 
                 col_map = config["output_columns"]
@@ -577,12 +594,14 @@ with tab_history:
                 if "우편번호" in hist_df.columns:
                     hist_df["우편번호"] = hist_df["우편번호"].apply(normalize_zip_code)
 
-                st.dataframe(hist_df, use_container_width=True)
-                st.caption(f"총 {len(hist_df)}건")
+                st.dataframe(hist_df.head(20), use_container_width=True)
+                st.caption(f"총 {len(hist_df)}건 (최대 20건 미리보기)")
 
                 hist_output = io.BytesIO()
                 with pd.ExcelWriter(
-                    hist_output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
+                    hist_output,
+                    engine="openpyxl",
+                    datetime_format="YYYY-MM-DD HH:MM:SS",
                 ) as writer:
                     hist_df.to_excel(
                         writer, index=False, sheet_name=config["output"]["sheet_name"]
