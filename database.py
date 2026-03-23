@@ -105,6 +105,19 @@ def save_training_record(
     return result.data[0]["id"]
 
 
+def get_user_api_key(conn: Client, user_id: str) -> str | None:
+    """DB(accounts 테이블)에서 관리자가 사전 등록한 API Key를 조회합니다."""
+    response = (
+        conn.table("accounts")
+        .select("gemini_api_key, is_active")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if response.data and response.data[0].get("is_active"):
+        return response.data[0]["gemini_api_key"]
+    return None
+
+
 def get_jobs_by_user(
     conn: Client,
     user_id: str,
