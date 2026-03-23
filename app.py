@@ -19,7 +19,7 @@ from services import (
 )
 from database import (
     get_connection,
-    get_user_api_key,
+    authenticate_user,
     create_extraction_job,
     update_extraction_job_total,
     save_extracted_orders,
@@ -68,21 +68,20 @@ if not st.session_state["logged_in_user"]:
             )
 
             if submit_button:
-                tester_accounts = st.secrets.get("tester_accounts", {})
-                if email in tester_accounts and str(tester_accounts[email]) == password:
-                    if db_conn:
-                        api_key = get_user_api_key(db_conn, user_id=email)
-                        if api_key:
-                            st.session_state["api_key"] = api_key
-                        else:
-                            st.error(
-                                "할당된 API Key가 없거나 비활성화되었습니다. 관리자에게 문의하세요."
-                            )
-                            st.stop()
-                    st.session_state["logged_in_user"] = email
-                    st.rerun()
+                if not db_conn:
+                    st.error("DB 연결이 설정되지 않았습니다. 관리자에게 문의하세요.")
                 else:
-                    st.error("이메일 또는 비밀번호가 올바르지 않습니다.")
+                    api_key = authenticate_user(
+                        db_conn, user_id=email, password=password
+                    )
+                    if api_key:
+                        st.session_state["api_key"] = api_key
+                        st.session_state["logged_in_user"] = email
+                        st.rerun()
+                    else:
+                        st.error(
+                            "이메일/비밀번호가 올바르지 않거나 비활성화된 계정입니다."
+                        )
     st.stop()  # 로그인되지 않은 경우 아래 메인 앱 코드 실행 방지
 
 # 로그인된 사용자 표시 및 로그아웃 버튼 (사이드바)
@@ -595,8 +594,8 @@ with tab_history:
                 if "우편번호" in hist_df.columns:
                     hist_df["우편번호"] = hist_df["우편번호"].apply(normalize_zip_code)
 
-                st.dataframe(hist_df, use_container_width=True)
-                st.caption(f"총 {len(hist_df)}건")
+                st.dataframe(hist_df.head(20), use_container_width=True)
+                st.caption(f"총 {len(hist_df)}건 (최대 20건 미리보기)")
 
                 hist_output = io.BytesIO()
                 with pd.ExcelWriter(

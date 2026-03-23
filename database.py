@@ -105,12 +105,15 @@ def save_training_record(
     return result.data[0]["id"]
 
 
-def get_user_api_key(conn: Client, user_id: str) -> str | None:
-    """DB(accounts 테이블)에서 관리자가 사전 등록한 API Key를 조회합니다."""
+def authenticate_user(conn: Client, user_id: str, password: str) -> str | None:
+    """accounts 테이블에서 user_id/password를 검증하고, 성공 시 gemini_api_key를 반환합니다.
+    인증 실패 또는 비활성 계정이면 None을 반환합니다.
+    """
     response = (
         conn.table("accounts")
         .select("gemini_api_key, is_active")
         .eq("user_id", user_id)
+        .eq("password", password)
         .execute()
     )
     if response.data and response.data[0].get("is_active"):
