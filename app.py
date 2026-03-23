@@ -17,7 +17,15 @@ from services import (
     batch_lookup_zip_codes,
     extract_chat_name,
 )
-from database import get_connection, save_training_record
+from database import (
+    get_connection,
+    create_extraction_job,
+    update_extraction_job_total,
+    save_extracted_orders,
+    save_training_record,
+    get_jobs_by_user,
+    get_orders_by_job,
+)
 
 # --- UI 구성 ---
 st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
@@ -96,8 +104,8 @@ with st.sidebar:
     st.markdown("[API Key 발급받기](https://aistudio.google.com/app/apikey)")
 
 # --- 탭 구성 ---
-tab_order, tab_catalog, tab_zipcode = st.tabs(
-    ["📦 주문서 추출", "📋 카탈로그 생성", "📮 우편번호 추출"]
+tab_order, tab_catalog, tab_zipcode, tab_history = st.tabs(
+    ["📦 주문서 추출", "📋 카탈로그 생성", "📮 우편번호 추출", "🗂️ 나의 추출 이력"]
 )
 
 # ===== 탭 1: 주문서 추출 (기존 기능) =====
@@ -187,6 +195,16 @@ with tab_order:
                 catalog_data = parse_catalog_json(catalog_file)
                 all_extracted_orders = []
 
+                job_id = None
+                if db_conn:
+                    job_id = create_extraction_job(
+                        conn=db_conn,
+                        user_id=st.session_state["logged_in_user"],
+                        title=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+                        live_start_time=time_after,
+                        model=config["gemini"]["model"],
+                    )
+
                 today_str = datetime.date.today().strftime("%Y%m%d")
                 seq = 1
                 total_files = len(chat_files)
@@ -218,15 +236,15 @@ with tab_order:
                         extracted_data = None
 
                     if extracted_data:
-                        if db_conn:
+                        if db_conn and job_id:
                             save_training_record(
                                 conn=db_conn,
-                                user_email=st.session_state["logged_in_user"],
+                                job_id=job_id,
+                                user_id=st.session_state["logged_in_user"],
                                 chat_filename=file_display,
-                                model_name=config["gemini"]["model"],
                                 catalog_data=catalog_data,
                                 chat_data=chat_data,
-                                response_json=extracted_data,
+                                predicted_json=extracted_data,
                             )
                         items = extracted_data.get("items", [])
                         if items:
@@ -273,6 +291,18 @@ with tab_order:
                         lambda addr: lookup_zip_code(addr, juso_api_key)
                     )
                     df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
+
+                if db_conn and job_id:
+                    save_extracted_orders(
+                        conn=db_conn,
+                        job_id=job_id,
+                        orders=df.to_dict("records"),
+                    )
+                    update_extraction_job_total(
+                        conn=db_conn,
+                        job_id=job_id,
+                        total_orders=len(df),
+                    )
 
                 col_map = config["output_columns"]
                 rename = {v: k for k, v in col_map.items() if v}
@@ -497,3 +527,82 @@ with tab_zipcode:
                         type="primary",
                         key="zip_download_btn",
                     )
+
+# ===== 탭 4: 추출 이력 =====
+with tab_history:
+    if not db_conn:
+        st.warning("DB 연결이 설정되지 않아 이력을 불러올 수 없습니다.")
+    else:
+        jobs = get_jobs_by_user(
+            conn=db_conn,
+            user_id=st.session_state["logged_in_user"],
+        )
+
+        if not jobs:
+            st.info("저장된 추출 이력이 없습니다.")
+        else:
+            job_labels = []
+            for j in jobs:
+                live_str = (
+                    j["live_start_time"][:16].replace("T", " ")
+                    if j.get("live_start_time")
+                    else "-"
+                )
+                job_labels.append(
+                    f"{j['title']}  |  라이브: {live_str}  |  {j['total_orders']}건"
+                )
+
+            selected_idx = st.radio(
+                "다운로드할 이력을 선택하세요 (최근 5건)",
+                options=range(len(jobs)),
+                format_func=lambda i: job_labels[i],
+            )
+
+            selected_job = jobs[selected_idx]
+            orders = get_orders_by_job(conn=db_conn, job_id=selected_job["id"])
+
+            if not orders:
+                st.info("해당 이력에 저장된 주문 데이터가 없습니다.")
+            else:
+                hist_df = pd.DataFrame(orders)
+                hist_df = hist_df.drop(
+                    columns=[c for c in ["id", "job_id", "created_at"] if c in hist_df.columns]
+                )
+
+                col_map = config["output_columns"]
+                rename = {v: k for k, v in col_map.items() if v}
+                hist_df = hist_df.rename(columns=rename)
+                hist_df = hist_df.reindex(columns=list(col_map.keys()), fill_value="")
+
+                if "우편번호" in hist_df.columns:
+                    hist_df["우편번호"] = hist_df["우편번호"].apply(normalize_zip_code)
+
+                st.dataframe(hist_df, use_container_width=True)
+                st.caption(f"총 {len(hist_df)}건")
+
+                hist_output = io.BytesIO()
+                with pd.ExcelWriter(
+                    hist_output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
+                ) as writer:
+                    hist_df.to_excel(
+                        writer, index=False, sheet_name=config["output"]["sheet_name"]
+                    )
+                    worksheet = writer.sheets[config["output"]["sheet_name"]]
+                    if "우편번호" in hist_df.columns:
+                        zip_col_idx = hist_df.columns.tolist().index("우편번호") + 1
+                        for row in worksheet.iter_rows(
+                            min_row=2,
+                            max_row=worksheet.max_row,
+                            min_col=zip_col_idx,
+                            max_col=zip_col_idx,
+                        ):
+                            row[0].number_format = "@"
+
+                st.download_button(
+                    label="📥 엑셀 파일(.xlsx) 다운로드",
+                    data=hist_output.getvalue(),
+                    file_name=f"{selected_job['title']}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    key="hist_download_btn",
+                )
