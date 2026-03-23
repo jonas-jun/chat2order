@@ -128,16 +128,32 @@ with tab_order:
         )
 
         if chat_files:
-            seen_names = set()
-            unique_files = []
+            name_groups = {}
             for f in chat_files:
-                if f.name not in seen_names:
-                    seen_names.add(f.name)
-                    unique_files.append(f)
+                content = f.read()
+                f.seek(0)
+                name_groups.setdefault(f.name, [])
+                # 같은 이름+같은 내용이면 중복 제거
+                if not any(content == existing for existing, _ in name_groups[f.name]):
+                    name_groups[f.name].append((content, f))
+
+            unique_files = []
+            display_names = {}
+            for name, entries in name_groups.items():
+                if len(entries) == 1:
+                    unique_files.append(entries[0][1])
+                    display_names[id(entries[0][1])] = name
+                else:
+                    stem = Path(name).stem
+                    suffix = Path(name).suffix
+                    for idx, (_, f) in enumerate(entries, start=1):
+                        display_names[id(f)] = f"{stem}({idx}){suffix}"
+                        unique_files.append(f)
             chat_files = unique_files
+            st.session_state["chat_display_names"] = display_names
             with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
                 for f in chat_files:
-                    st.write(f"• {f.name}")
+                    st.write(f"• {display_names.get(id(f), f.name)}")
             if st.button("❌ 업로드 파일 전체 삭제", key="clear_chat_files"):
                 st.session_state["chat_uploader_key"] += 1
                 st.rerun()
@@ -176,7 +192,9 @@ with tab_order:
                 total_files = len(chat_files)
                 progress_text = st.empty()
                 progress_bar = st.progress(0)
+                display_names = st.session_state.get("chat_display_names", {})
                 for i, chat_file in enumerate(chat_files):
+                    file_display = display_names.get(id(chat_file), chat_file.name)
                     progress_text.write(f"💬 채팅 내역 분석 중 ({i}/{total_files})")
                     chat_data, ts = parse_csv(
                         chat_file,
@@ -204,7 +222,7 @@ with tab_order:
                             save_training_record(
                                 conn=db_conn,
                                 user_email=st.session_state["logged_in_user"],
-                                chat_filename=chat_file.name,
+                                chat_filename=file_display,
                                 model_name=config["gemini"]["model"],
                                 catalog_data=catalog_data,
                                 chat_data=chat_data,
@@ -213,7 +231,7 @@ with tab_order:
                         items = extracted_data.get("items", [])
                         if items:
                             chat_name = extract_chat_name(
-                                chat_file.name,
+                                file_display,
                                 filename_prefix=config["csv"]["filename_prefix"],
                             )
                             order_number = f"{today_str}{seq:03d}"
