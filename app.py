@@ -26,6 +26,7 @@ from database import (
     save_training_record,
     get_jobs_by_user,
     get_orders_by_job,
+    get_catalog_by_job,
 )
 
 # --- UI 구성 ---
@@ -617,11 +618,48 @@ with tab_history:
                         ):
                             row[0].number_format = "@"
 
-                st.download_button(
-                    label="📥 엑셀 파일(.xlsx) 다운로드",
-                    data=hist_output.getvalue(),
-                    file_name=f"{selected_job['title']}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                    key="hist_download_btn",
-                )
+                col_dl1, col_dl2 = st.columns(2)
+
+                with col_dl1:
+                    st.download_button(
+                        label="📥 엑셀 파일(.xlsx) 다운로드",
+                        data=hist_output.getvalue(),
+                        file_name=f"{selected_job['title']}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        type="primary",
+                        key="hist_download_btn",
+                        use_container_width=True,
+                    )
+
+                with col_dl2:
+                    catalog_json_str = get_catalog_by_job(
+                        conn=db_conn, job_id=selected_job["id"]
+                    )
+                    if catalog_json_str:
+                        # DB에는 [{"상품명": ..., "옵션": [...]}] list 형식으로 저장되어 있으므로
+                        # 실제 사용 형식인 {"상품명": [옵션...]} dict으로 역변환
+                        catalog_list = json.loads(catalog_json_str)
+                        catalog_dict = {
+                            item["상품명"]: item["옵션"] for item in catalog_list
+                        }
+                        formatted = json.dumps(
+                            catalog_dict,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                        st.download_button(
+                            label="📋 카탈로그(.json) 다운로드",
+                            data=formatted.encode("utf-8"),
+                            file_name=f"catalog_{selected_job['title']}.json",
+                            mime="application/json",
+                            type="secondary",
+                            key="hist_catalog_btn",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.button(
+                            "📋 카탈로그 정보 없음",
+                            disabled=True,
+                            key="hist_catalog_btn_disabled",
+                            use_container_width=True,
+                        )

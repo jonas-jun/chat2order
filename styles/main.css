@@ -39,6 +39,21 @@
 }
 
 /* 버튼 스타일 */
+.stButton > button[kind="secondary"],
+[data-testid="stDownloadButton"] > button[kind="secondaryFormSubmit"] {
+    background-color: #F7F7F7;
+    border: 1px solid #D0D0D0;
+    color: #555555;
+    transition: all 0.2s;
+}
+
+.stButton > button[kind="secondary"]:hover,
+[data-testid="stDownloadButton"] > button[kind="secondaryFormSubmit"]:hover {
+    background-color: #EEEEEE;
+    border-color: #AAAAAA;
+    color: #333333;
+}
+
 .stButton > button[kind="primary"] {
     background: linear-gradient(135deg, #FF6B35, #F7931E);
     border: none;

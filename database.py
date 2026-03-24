@@ -105,6 +105,25 @@ def save_training_record(
     return result.data[0]["id"]
 
 
+def get_catalog_by_job(conn: Client, job_id: str) -> str | None:
+    """training_data 테이블에서 job_id에 해당하는 catalog_json 문자열을 반환합니다.
+
+    하나의 job_id에 채팅 파일 수만큼 여러 레코드가 존재할 수 있으나,
+    동일 작업 내 모든 레코드는 같은 카탈로그를 공유하므로 LIMIT 1로 조회합니다.
+    데이터가 없으면 None을 반환합니다.
+    """
+    result = (
+        conn.table("training_data")
+        .select("catalog_json")
+        .eq("job_id", job_id)
+        .limit(1)
+        .execute()
+    )
+    if result.data:
+        return result.data[0]["catalog_json"]
+    return None
+
+
 def authenticate_user(conn: Client, user_id: str, password: str) -> str | None:
     """accounts 테이블에서 user_id/password를 검증하고, 성공 시 gemini_api_key를 반환합니다.
     인증 실패 또는 비활성 계정이면 None을 반환합니다.
