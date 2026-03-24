@@ -18,7 +18,7 @@ MarketMate_Chat2Order/
 ├── main.py                       # CLI 실행 진입점
 ├── services.py                   # 핵심 비즈니스 로직 (파싱, LLM 호출, 후처리)
 ├── models.py                     # Pydantic 데이터 모델
-├── database.py                   # Supabase 연동 (학습 데이터 저장)
+├── database.py                   # Supabase 연동 (인증, 주문 저장, 학습 데이터 저장)
 ├── config.yaml                   # 공개 설정 파일 (모델, 출력 컬럼, CSV 파싱 등)
 ├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
 ├── requirements.txt
@@ -26,7 +26,7 @@ MarketMate_Chat2Order/
 │   └── main.css                  # Streamlit 커스텀 CSS
 └── .streamlit/
     ├── config.toml               # Streamlit 테마 설정
-    └── secrets.toml              # 비공개 설정 (API 키, DB 접속, 테스터 계정, 프롬프트)
+    └── secrets.toml              # 비공개 설정 (DB 접속 정보, 우편번호 API 키, 프롬프트)
 ```
 
 ---
@@ -39,21 +39,21 @@ MarketMate_Chat2Order/
 streamlit run app.py
 ```
 
-앱 실행 후 로그인이 필요합니다. 테스터 계정은 `.streamlit/secrets.toml`의 `tester_accounts`에 설정합니다.
+앱 실행 후 로그인이 필요합니다. 계정은 Supabase `accounts` 테이블에서 관리합니다.
 
 ### CLI
 
 ```bash
 python3 main.py \
   --api-key <GEMINI_API_KEY> \
-  --catalog catalog.jsonl \
+  --catalog catalog.json \
   --chat 고객A.csv 고객B.csv
 ```
 
 | 옵션 | 설명 |
 |---|---|
 | `--api-key` | Gemini API Key (필수) |
-| `--catalog` | 카탈로그 JSONL 파일 경로 |
+| `--catalog` | 카탈로그 JSON 파일 경로 |
 | `--chat` | 대화 파일 경로, 여러 개 가능 (CSV 또는 JSONL) |
 | `--output` | 출력 엑셀 파일명 (기본값: `config.yaml`의 `file_name`) |
 | `--config` | 설정 파일 경로 (기본값: `config.yaml`) |
@@ -78,7 +78,6 @@ python3 main.py \
 
 | 항목 | 설명 |
 |---|---|
-| `tester_accounts` | 로그인 허용 이메일/비밀번호 |
 | `juso.api_key` | 행정안전부 도로명주소 API 키 (우편번호 자동 조회용) |
 | `supabase.url` | Supabase 프로젝트 URL |
 | `supabase.key` | Supabase API 키 |
@@ -86,30 +85,65 @@ python3 main.py \
 | `prompt.order_extraction2` | 주문 추출 프롬프트 v2 |
 | `prompt.address_to_search` | 도로명주소 추출 프롬프트 (`{address}` 플레이스홀더) |
 
+### Supabase `accounts` 테이블
+
+계정 인증 및 Gemini API Key를 DB에서 관리합니다.
+
+| 컬럼 | 설명 |
+|---|---|
+| `user_id` | 로그인 이메일 |
+| `password` | 비밀번호 |
+| `gemini_api_key` | 계정별 Gemini API Key (로그인 시 자동 할당) |
+| `is_active` | 계정 활성화 여부 |
+
 ---
 
 ## 사용 흐름 (웹 앱)
 
-1. 로그인
-2. 사이드바에서 Gemini API Key 입력
-3. 카탈로그 파일(`.json`) 업로드
-4. 대화 내역 파일(`.csv` 또는 `.jsonl`) 업로드 (여러 파일 가능)
-5. 라이브쇼핑 시간 범위 지정
-6. "주문서 추출 실행" 클릭
-7. 추출 결과 확인 및 엑셀 다운로드
+### 탭 1 — 📦 주문서 추출
+
+1. 로그인 (Supabase `accounts` 테이블 인증)
+2. 카탈로그 파일(`.json`) 업로드
+3. 대화 내역 파일(`.csv`) 업로드 (여러 파일 가능)
+4. 라이브쇼핑 시간 범위 지정
+5. "주문서 추출 실행" 클릭
+6. 추출 결과 확인 및 엑셀 다운로드
+
+### 탭 2 — 📋 카탈로그 생성
+
+1. 재고 CSV 파일 업로드 (`상품명`, `옵션내용` 컬럼 필요)
+2. 상품/옵션 미리보기 확인
+3. `catalog.json` 다운로드
+
+### 탭 3 — 📮 우편번호 추출
+
+1. 주소 컬럼이 포함된 엑셀 파일 업로드
+2. "우편번호 조회 실행" 클릭
+3. 우편번호가 채워진 엑셀 다운로드
+
+### 탭 4 — 🗂️ 나의 추출 이력
+
+- 최근 5건의 추출 작업 이력 조회
+- 작업별 주문 데이터 미리보기
+- 엑셀 파일(`.xlsx`) 다운로드
+- 당시 사용한 카탈로그(`.json`) 재다운로드 (저장된 데이터가 있는 경우)
 
 ---
 
 ## 입력 데이터
 
-### 카탈로그 파일 (`catalog.jsonl`)
+### 카탈로그 파일 (`catalog.json`)
 
-판매 중인 상품 목록. 각 라인은 Python dict 문자열 형태입니다.
+판매 중인 상품 목록. `{"상품명": ["옵션1", "옵션2"]}` 형태의 JSON 파일입니다.
 
+```json
+{
+  "디오르 D스트랩 스커트": ["단일상품"],
+  "발렌 봄가디건": ["그레이", "레드", "블랙", "화이트"]
+}
 ```
-{"상품명": "디오르 D스트랩 스커트", "옵션": ["단일상품"]}
-{"상품명": "발렌 봄가디건", "옵션": ["그레이", "레드", "블랙", "화이트"]}
-```
+
+탭 2(카탈로그 생성)에서 재고 CSV로부터 자동 생성할 수 있습니다.
 
 ### 대화 파일 (CSV 또는 JSONL)
 
@@ -171,7 +205,8 @@ Gemini API (Structured Output)
     │
     ▼
 DB 저장 (Supabase)
- - 학습 데이터로 입력/출력 쌍 저장
+ - 추출 작업 및 주문 데이터 저장 (이력 조회용)
+ - 학습 데이터로 입력/출력 쌍 저장 (카탈로그 포함)
     │
     ▼
 Excel 출력 (.xlsx)
@@ -181,5 +216,6 @@ Excel 출력 (.xlsx)
 
 ## 보안 유의사항
 
-- `.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (API 키, 인증 정보, 프롬프트 포함)
+- `.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (DB 접속 정보, 우편번호 API 키, 프롬프트 포함)
+- 계정 정보 및 Gemini API Key는 Supabase `accounts` 테이블에서 관리하며, 클라이언트에 노출되지 않습니다.
 - 실제 고객 개인정보(이름, 연락처, 주소)가 포함된 원본 데이터는 프로토타입 환경에 업로드하지 마세요.
