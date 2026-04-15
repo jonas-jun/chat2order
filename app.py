@@ -81,7 +81,9 @@ if not st.session_state["logged_in_user"]:
                     )
                     if account_info:
                         st.session_state["api_key"] = account_info["gemini_api_key"]
-                        st.session_state["monthly_extract_limit"] = account_info["monthly_extract_limit"]
+                        st.session_state["monthly_extract_limit"] = account_info[
+                            "monthly_extract_limit"
+                        ]
                         st.session_state["logged_in_user"] = email
                         st.rerun()
                     else:
