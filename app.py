@@ -24,6 +24,8 @@ from database import (
     update_extraction_job_total,
     save_extracted_orders,
     save_training_record,
+    save_extract_call_log,
+    get_monthly_api_call_count,
     get_jobs_by_user,
     get_orders_by_job,
     get_catalog_by_job,
@@ -48,6 +50,8 @@ if "logged_in_user" not in st.session_state:
     st.session_state["logged_in_user"] = None
 if "api_key" not in st.session_state:
     st.session_state["api_key"] = None
+if "monthly_extract_limit" not in st.session_state:
+    st.session_state["monthly_extract_limit"] = None
 
 if not st.session_state["logged_in_user"]:
     col_left, col_center, col_right = st.columns([1, 2, 1])
@@ -72,11 +76,14 @@ if not st.session_state["logged_in_user"]:
                 if not db_conn:
                     st.error("DB 연결이 설정되지 않았습니다. 관리자에게 문의하세요.")
                 else:
-                    api_key = authenticate_user(
+                    account_info = authenticate_user(
                         db_conn, user_id=email, password=password
                     )
-                    if api_key:
-                        st.session_state["api_key"] = api_key
+                    if account_info:
+                        st.session_state["api_key"] = account_info["gemini_api_key"]
+                        st.session_state["monthly_extract_limit"] = account_info[
+                            "monthly_extract_limit"
+                        ]
                         st.session_state["logged_in_user"] = email
                         st.rerun()
                     else:
@@ -116,6 +123,16 @@ with st.sidebar:
         st.success("✅ 관리자 승인 완료")  # gemini api key 연동 완료
     else:
         st.error("❌ API Key 연동 실패")
+
+    monthly_limit = st.session_state.get("monthly_extract_limit")
+    if db_conn:
+        monthly_used = get_monthly_api_call_count(
+            db_conn, st.session_state["logged_in_user"]
+        )
+        if monthly_limit is None:
+            st.info(f"이번 달 사용량: {monthly_used} / 무제한")
+        else:
+            st.info(f"이번 달 사용량: {monthly_used} / {monthly_limit}")
 
 # --- 탭 구성 ---
 tab_order, tab_catalog, tab_zipcode, tab_history = st.tabs(
@@ -204,6 +221,26 @@ with tab_order:
         elif not chat_files:
             st.warning("대화 내역 파일을 1개 이상 업로드해 주세요.")
         else:
+            monthly_limit = st.session_state.get("monthly_extract_limit")
+            files_to_process = chat_files
+            if db_conn and monthly_limit is not None:
+                monthly_used = get_monthly_api_call_count(
+                    db_conn, st.session_state["logged_in_user"]
+                )
+                remaining = monthly_limit - monthly_used
+                if remaining <= 0:
+                    st.error(
+                        f"이번 달 API 호출 한도({monthly_limit}회)를 모두 사용했습니다. "
+                        "다음 달 1일에 초기화됩니다."
+                    )
+                    st.stop()
+                elif len(chat_files) > remaining:
+                    st.warning(
+                        f"이번 달 남은 한도가 {remaining}회입니다. "
+                        f"파일 {len(chat_files)}개 중 {remaining}개만 처리합니다."
+                    )
+                    files_to_process = chat_files[:remaining]
+
             with st.status("주문서 추출 중입니다", expanded=True) as status:
                 st.write("📋 카탈로그를 파싱 중")
                 catalog_data = parse_catalog_json(catalog_file)
@@ -221,11 +258,11 @@ with tab_order:
 
                 today_str = datetime.date.today().strftime("%Y%m%d")
                 seq = 1
-                total_files = len(chat_files)
+                total_files = len(files_to_process)
                 progress_text = st.empty()
                 progress_bar = st.progress(0)
                 display_names = st.session_state.get("chat_display_names", {})
-                for i, chat_file in enumerate(chat_files):
+                for i, chat_file in enumerate(files_to_process):
                     file_display = display_names.get(id(chat_file), chat_file.name)
                     progress_text.write(f"💬 채팅 내역 분석 중 ({i}/{total_files})")
                     chat_data, ts = parse_csv(
@@ -245,6 +282,13 @@ with tab_order:
                             temperature=config["gemini"]["temperature"],
                             prompt_template=st.secrets["prompt"]["order_extraction"],
                         )
+                        if db_conn and job_id:
+                            save_extract_call_log(
+                                conn=db_conn,
+                                user_id=st.session_state["logged_in_user"],
+                                job_id=job_id,
+                                chat_filename=file_display,
+                            )
                     except RuntimeError as e:
                         st.error(str(e))
                         extracted_data = None

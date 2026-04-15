@@ -244,6 +244,8 @@ $RECYCLE.BIN/
 *.lnk
 
 .streamlit/secrets.toml
+.claude/settings.local.json
+instructions/*
 
 # Training data DB
 *.db
