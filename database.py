@@ -124,20 +124,55 @@ def get_catalog_by_job(conn: Client, job_id: str) -> str | None:
     return None
 
 
-def authenticate_user(conn: Client, user_id: str, password: str) -> str | None:
-    """accounts 테이블에서 user_id/password를 검증하고, 성공 시 gemini_api_key를 반환합니다.
+def authenticate_user(conn: Client, user_id: str, password: str) -> dict | None:
+    """accounts 테이블에서 user_id/password를 검증하고, 성공 시 계정 정보 dict를 반환합니다.
+    반환 키: gemini_api_key, monthly_extract_limit (None이면 무제한)
     인증 실패 또는 비활성 계정이면 None을 반환합니다.
     """
     response = (
         conn.table("accounts")
-        .select("gemini_api_key, is_active")
+        .select("gemini_api_key, is_active, monthly_extract_limit")
         .eq("user_id", user_id)
         .eq("password", password)
         .execute()
     )
     if response.data and response.data[0].get("is_active"):
-        return response.data[0]["gemini_api_key"]
+        row = response.data[0]
+        return {
+            "gemini_api_key": row["gemini_api_key"],
+            "monthly_extract_limit": row.get("monthly_extract_limit"),
+        }
     return None
+
+
+def save_extract_call_log(
+    conn: Client,
+    user_id: str,
+    job_id: str,
+    chat_filename: str,
+) -> None:
+    """extract_call_logs 테이블에 API 호출 1건을 기록합니다."""
+    conn.table("extract_call_logs").insert(
+        {
+            "user_id": user_id,
+            "job_id": job_id,
+            "chat_filename": chat_filename,
+        }
+    ).execute()
+
+
+def get_monthly_api_call_count(conn: Client, user_id: str) -> int:
+    """이번 달(1일~말일) 동안 user_id의 API 호출 횟수를 반환합니다."""
+    now = datetime.now()
+    month_start = datetime(now.year, now.month, 1).isoformat()
+    result = (
+        conn.table("extract_call_logs")
+        .select("id", count="exact")
+        .eq("user_id", user_id)
+        .gte("called_at", month_start)
+        .execute()
+    )
+    return result.count if result.count is not None else 0
 
 
 def get_jobs_by_user(
