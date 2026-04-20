@@ -707,24 +707,3 @@ with tab_history:
                             key="hist_catalog_btn_disabled",
                             use_container_width=True,
                         )
-
-# ===== 임시 디버그 =====
-with st.expander("🔧 juso API 연결 테스트 (임시)"):
-    if st.button("테스트 실행", key="juso_test_btn"):
-        import requests as _requests
-        try:
-            _resp = _requests.get(
-                "https://business.juso.go.kr/addrlink/addrLinkApi.do",
-                params={
-                    "confmKey": juso_api_key,
-                    "currentPage": 1,
-                    "countPerPage": 1,
-                    "keyword": "서울시청",
-                    "resultType": "json",
-                },
-                timeout=10,
-            )
-            st.write(f"HTTP status: {_resp.status_code}")
-            st.json(_resp.json())
-        except Exception as _e:
-            st.error(f"에러: {_e}")
