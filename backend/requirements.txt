@@ -5,6 +5,7 @@ pydantic==2.12.4
 openpyxl==3.1.2
 pyyaml==6.0.3
 supabase==2.28.1
+requests==2.32.3
 
 # FastAPI 마이그레이션 (Phase 2)
 fastapi
