@@ -37,7 +37,29 @@ MarketMate_Chat2Order/
 
 ## 실행 방법
 
-### Streamlit 웹 앱
+### v2: FastAPI Backend + Next.js Frontend (Cloud Run 마이그레이션 — #48)
+
+**Backend (FastAPI)**
+
+```bash
+cd backend
+cp .env.example .env.local  # 값 채우기 (Supabase, JWT_SECRET, prompts 등)
+uvicorn main:app --reload --port 8000
+```
+
+→ Swagger UI: <http://localhost:8000/docs>
+
+**Frontend (Next.js)**
+
+```bash
+cd frontend
+npm install
+BACKEND_URL=http://localhost:8000 npm run dev
+```
+
+→ <http://localhost:3000> (미인증 시 `/login` 자동 리다이렉트)
+
+### v1: Streamlit 웹 앱 (마이그레이션 완료 후 제거 예정)
 
 ```bash
 cd backend
