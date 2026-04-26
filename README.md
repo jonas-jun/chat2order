@@ -10,23 +10,27 @@
 
 ---
 
-## 프로젝트 구조
+## 프로젝트 구조 (Monorepo)
+
+> Cloud Run 배포를 위해 backend(FastAPI) + frontend(Next.js) 모노레포로 전환 중. 마이그레이션 플랜은 #48 참조.
 
 ```
 MarketMate_Chat2Order/
-├── app.py                        # Streamlit 웹 앱 (메인 UI)
-├── main.py                       # CLI 실행 진입점
-├── services.py                   # 핵심 비즈니스 로직 (파싱, LLM 호출, 후처리)
-├── models.py                     # Pydantic 데이터 모델
-├── database.py                   # Supabase 연동 (인증, 주문 저장, 학습 데이터 저장)
-├── config.yaml                   # 공개 설정 파일 (모델, 출력 컬럼, CSV 파싱 등)
-├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
-├── requirements.txt
-├── styles/
-│   └── main.css                  # Streamlit 커스텀 CSS
-└── .streamlit/
-    ├── config.toml               # Streamlit 테마 설정
-    └── secrets.toml              # 비공개 설정 (DB 접속 정보, 우편번호 API 키, 프롬프트)
+├── backend/
+│   ├── app.py                        # Streamlit 웹 앱 (Phase 2에서 FastAPI로 대체 예정)
+│   ├── cli.py                        # CLI 실행 진입점 (구 main.py)
+│   ├── services.py                   # 핵심 비즈니스 로직 (파싱, LLM 호출, 후처리)
+│   ├── models.py                     # Pydantic 데이터 모델
+│   ├── database.py                   # Supabase 연동 (인증, 주문 저장, 학습 데이터 저장)
+│   ├── config.yaml                   # 공개 설정 파일 (모델, 출력 컬럼, CSV 파싱 등)
+│   ├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
+│   ├── requirements.txt
+│   ├── styles/
+│   │   └── main.css                  # Streamlit 커스텀 CSS
+│   └── .streamlit/
+│       ├── config.toml               # Streamlit 테마 설정
+│       └── secrets.toml              # 비공개 설정 (DB 접속 정보, 우편번호 API 키, 프롬프트)
+└── frontend/                         # Next.js (Phase 3에서 초기화)
 ```
 
 ---
@@ -36,6 +40,7 @@ MarketMate_Chat2Order/
 ### Streamlit 웹 앱
 
 ```bash
+cd backend
 streamlit run app.py
 ```
 
@@ -44,7 +49,8 @@ streamlit run app.py
 ### CLI
 
 ```bash
-python3 main.py \
+cd backend
+python3 cli.py \
   --api-key <GEMINI_API_KEY> \
   --catalog catalog.json \
   --chat 고객A.csv 고객B.csv
@@ -74,7 +80,7 @@ python3 main.py \
 | `csv.filename_prefix` | 카카오톡 채널 CSV 파일명 접두사 |
 | `csv.exclude_messages` | 파싱 시 제외할 시스템 메시지 목록 |
 
-### `.streamlit/secrets.toml` (비공개)
+### `backend/.streamlit/secrets.toml` (비공개)
 
 | 항목 | 설명 |
 |---|---|
@@ -216,6 +222,6 @@ Excel 출력 (.xlsx)
 
 ## 보안 유의사항
 
-- `.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (DB 접속 정보, 우편번호 API 키, 프롬프트 포함)
+- `backend/.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (DB 접속 정보, 우편번호 API 키, 프롬프트 포함)
 - 계정 정보 및 Gemini API Key는 Supabase `accounts` 테이블에서 관리하며, 클라이언트에 노출되지 않습니다.
 - 실제 고객 개인정보(이름, 연락처, 주소)가 포함된 원본 데이터는 프로토타입 환경에 업로드하지 마세요.

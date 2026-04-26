@@ -244,10 +244,22 @@ $RECYCLE.BIN/
 *.lnk
 
 .streamlit/secrets.toml
+backend/.streamlit/secrets.toml
 .claude/settings.local.json
 instructions/*
 
 # Training data DB
 *.db
+
+# Backend
+backend/.env
+backend/.env.local
+
+# Frontend (Next.js)
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env*.local
+frontend/next-env.d.ts
 
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,jupyternotebooks
