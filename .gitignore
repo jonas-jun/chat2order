@@ -250,4 +250,7 @@ instructions/*
 # Training data DB
 *.db
 
+# for claude
+working
+
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,jupyternotebooks

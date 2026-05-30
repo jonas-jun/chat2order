@@ -218,22 +218,29 @@ def batch_lookup_zip_codes(
     )
 
 
-def extract_chat_name(filename: str, filename_prefix: str = "") -> str | None:
+def extract_chat_name(filename: str, filename_prefix: str = "", strip_emoji: bool = False) -> str | None:
     """
     파일명에서 채팅명을 추출합니다.
-    - CSV: 다애모드(daae_mode)_<채팅명>.csv
+    - CSV: 이지픽_<채팅명>.csv
     - JSONL: <채팅명>_2026-03-12-10-17-22.jsonl
+    strip_emoji=True 시 이모지를 제거하여 반환합니다.
     """
+    import emoji as emoji_lib
+
     name = unicodedata.normalize("NFC", Path(filename).stem)
     if filename_prefix:
         prefix = unicodedata.normalize("NFC", filename_prefix)
         if name.startswith(prefix):
-            return name[len(prefix) :]
-    return re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name) or None
+            name = name[len(prefix):]
+    else:
+        name = re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name)
+    if strip_emoji:
+        name = emoji_lib.replace_emoji(name, replace="").strip()
+    return name or None
 
 
 def extract_timestamp(filename: str) -> datetime | None:
-    """파일명에서 timestamp를 추출합니다. (예: 김성희_2026-03-12-10-17-22.jsonl)"""
+    """[레거시] JSONL 파일명 기반 timestamp 추출. 신 CSV 포맷에서는 parse_csv()의 반환값 사용."""
     ts_match = re.search(r"(\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2})", filename)
     if ts_match:
         return datetime.strptime(ts_match.group(1), "%Y-%m-%d-%H-%M-%S")
@@ -336,7 +343,7 @@ def parse_csv(
     for _, row in df.iterrows():
         user = row.get("USER", "")
         message = re.sub(r"\s+", " ", str(row.get("MESSAGE", ""))).strip()
-        if any(message.startswith(excl) for excl in exclude_messages):
+        if any(excl in message for excl in exclude_messages):
             continue
         messages.append({"user": user, "message": message})
 

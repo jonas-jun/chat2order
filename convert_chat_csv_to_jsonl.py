@@ -9,12 +9,12 @@ def normalize_multispaces(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-PREFIX = "다애모드(daae_mode)_"
+PREFIX = "이지픽_"
 
 
 def extract_nickname(filepath: str, prefix=PREFIX) -> str:
     filename = os.path.basename(filepath)
-    name = filename.removeprefix(PREFIX).removesuffix(".csv")
+    name = filename.removeprefix(prefix).removesuffix(".csv")
     return name
 
 
@@ -46,16 +46,15 @@ def export_jsonl(data: list, out_f: str):
 
 
 exclude_messages = [
-    "'다애모드(daae_mode)' 채널을 추가해 주셔서 감사합니다.",
-    "오늘의 라이브 특가입니다♥️",
-    "친구 추가시 첫구매 무배!",
-    "다애모드(daae_mode) 채널을 추가하시면 광고와 마케팅 메시지를 카카오톡으로 받아 볼 수 있습니다.",
+    "'이지픽' 채널을 추가해 주셔서 감사합니다.",
+    "임실장이 알려주는 명품코디 꿀 TIP!",
     "알림톡/친구톡 메시지는 관리자센터에서 확인할 수 없습니다.",
 ]
 
 
 def main():
-    fnames = glob.glob("/home/jonas/workspace/git/test/*.csv")
+    folder = "/home/jonas/workspace/git/test"
+    fnames = glob.glob(os.path.join(folder, "이지픽_*.csv"))
     for fname in fnames:
         order_name = extract_nickname(fname)
         df = pd.read_csv(fname, encoding="utf-8-sig", encoding_errors="replace")
