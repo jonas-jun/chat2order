@@ -280,7 +280,7 @@ with tab_order:
                             chat_data,
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
-                            prompt_template=st.secrets["prompt"]["order_extraction"],
+                            prompt_template=st.secrets["prompt"]["order_extraction2"],
                         )
                         if db_conn and job_id:
                             save_extract_call_log(
