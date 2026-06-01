@@ -94,7 +94,7 @@ def main():
                 chat_data,
                 model=config["gemini"]["model"],
                 temperature=config["gemini"]["temperature"],
-                prompt_template=secrets["prompt"]["order_extraction"],
+                prompt_template=secrets["prompt"]["order_extraction2"],
             )
         except RuntimeError as e:
             print(f"[ERROR] {e}")
