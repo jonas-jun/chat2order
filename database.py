@@ -205,3 +205,48 @@ def get_orders_by_job(
         .execute()
     )
     return result.data
+
+
+def save_raw_chat_files(
+    conn: Client,
+    job_id: str,
+    user_id: str,
+    files: list[dict],
+) -> None:
+    """raw_chat_files 테이블에 원본 CSV row들을 일괄 삽입합니다.
+
+    files의 각 dict는 다음 키를 포함해야 합니다:
+    filename, chat_name, content, message_count
+    """
+    if not files:
+        return
+    rows = [
+        {
+            "job_id": job_id,
+            "user_id": user_id,
+            "filename": f.get("filename"),
+            "chat_name": f.get("chat_name"),
+            "content": f.get("content"),
+            "message_count": f.get("message_count"),
+            "created_at": datetime.now().isoformat(),
+        }
+        for f in files
+    ]
+    conn.table("raw_chat_files").insert(rows).execute()
+
+
+def get_raw_files_by_job(
+    conn: Client,
+    job_id: str,
+) -> list[dict]:
+    """job_id에 해당하는 원본 CSV 파일 목록을 반환합니다.
+    반환 키: id, filename, chat_name, content, message_count
+    """
+    result = (
+        conn.table("raw_chat_files")
+        .select("id, filename, chat_name, content, message_count")
+        .eq("job_id", job_id)
+        .order("filename")
+        .execute()
+    )
+    return result.data

@@ -16,6 +16,7 @@ from services import (
     normalize_zip_code,
     batch_lookup_zip_codes,
     extract_chat_name,
+    search_keyword_in_raw_csv,
 )
 from database import (
     get_connection,
@@ -29,6 +30,8 @@ from database import (
     get_jobs_by_user,
     get_orders_by_job,
     get_catalog_by_job,
+    save_raw_chat_files,
+    get_raw_files_by_job,
 )
 
 # --- UI 구성 ---
@@ -135,8 +138,14 @@ with st.sidebar:
             st.info(f"이번 달 사용량: {monthly_used} / {monthly_limit}")
 
 # --- 탭 구성 ---
-tab_order, tab_catalog, tab_zipcode, tab_history = st.tabs(
-    ["📦 주문서 추출", "📋 카탈로그 생성", "📮 우편번호 추출", "🗂️ 나의 추출 이력"]
+tab_order, tab_catalog, tab_zipcode, tab_history, tab_search = st.tabs(
+    [
+        "📦 주문서 추출",
+        "📋 카탈로그 생성",
+        "📮 우편번호 추출",
+        "🗂️ 나의 추출 이력",
+        "🔎 채팅 검색",
+    ]
 )
 
 # ===== 탭 1: 주문서 추출 (기존 기능) =====
@@ -245,6 +254,7 @@ with tab_order:
                 st.write("📋 카탈로그를 파싱 중")
                 catalog_data = parse_catalog_json(catalog_file)
                 all_extracted_orders = []
+                raw_files_buffer = []
 
                 job_id = None
                 if db_conn:
@@ -271,6 +281,21 @@ with tab_order:
                         exclude_messages=config["csv"]["exclude_messages"],
                         time_after=time_after,
                         time_before=time_before,
+                    )
+
+                    # 원본 CSV를 키워드 검색용으로 보관 (탭 "채팅 검색")
+                    raw_files_buffer.append(
+                        {
+                            "filename": file_display,
+                            "chat_name": extract_chat_name(
+                                file_display,
+                                filename_prefix=config["csv"]["filename_prefix"],
+                            ),
+                            "content": chat_file.getvalue().decode(
+                                "utf-8-sig", errors="replace"
+                            ),
+                            "message_count": len(chat_data),
+                        }
                     )
 
                     try:
@@ -330,6 +355,14 @@ with tab_order:
 
                     progress_bar.progress((i + 1) / total_files)
                     progress_text.write(f"💬 채팅 내역 분석 중 ({i + 1}/{total_files})")
+
+                if db_conn and job_id and raw_files_buffer:
+                    save_raw_chat_files(
+                        conn=db_conn,
+                        job_id=job_id,
+                        user_id=st.session_state["logged_in_user"],
+                        files=raw_files_buffer,
+                    )
 
                 if juso_api_key:
                     st.write("📮 우편번호 조회 중")
@@ -706,4 +739,108 @@ with tab_history:
                             disabled=True,
                             key="hist_catalog_btn_disabled",
                             use_container_width=True,
+                        )
+
+# ===== 탭 5: 채팅 검색 =====
+with tab_search:
+    if not db_conn:
+        st.warning("DB 연결이 설정되지 않아 검색할 수 없습니다.")
+    else:
+        jobs = get_jobs_by_user(
+            conn=db_conn,
+            user_id=st.session_state["logged_in_user"],
+        )
+
+        if not jobs:
+            st.info("저장된 추출 이력이 없습니다. 먼저 주문서 추출을 실행해 주세요.")
+        else:
+            job_labels = []
+            for j in jobs:
+                live_str = (
+                    j["live_start_time"][:16].replace("T", " ")
+                    if j.get("live_start_time")
+                    else "-"
+                )
+                job_labels.append(
+                    f"{j['title']}  |  라이브: {live_str}  |  {j['total_orders']}건"
+                )
+
+            search_idx = st.radio(
+                "검색할 추출 작업을 선택하세요 (최근 5건)",
+                options=range(len(jobs)),
+                format_func=lambda i: job_labels[i],
+                key="search_job_radio",
+            )
+            selected_job = jobs[search_idx]
+
+            keyword = st.text_input(
+                "검색 키워드 (대화 내용에서 정확히 포함된 파일을 찾습니다)",
+                key="search_keyword_input",
+                placeholder="예: 블랙, 환불, 입금",
+            )
+
+            if st.button("🔍 검색", type="primary", key="search_run_btn"):
+                if not keyword.strip():
+                    st.warning("검색 키워드를 입력해 주세요.")
+                else:
+                    raw_files = get_raw_files_by_job(
+                        conn=db_conn, job_id=selected_job["id"]
+                    )
+                    if not raw_files:
+                        st.session_state["search_results"] = None
+                        st.info(
+                            "이 작업은 원본 대화가 저장되지 않았습니다. "
+                            "(채팅 검색 기능 적용 이전에 추출되었거나 DB 미연결 상태로 추출된 작업입니다.)"
+                        )
+                    else:
+                        results = []
+                        for f in raw_files:
+                            matches = search_keyword_in_raw_csv(
+                                f.get("content", ""), keyword
+                            )
+                            if matches:
+                                results.append(
+                                    {
+                                        "id": f["id"],
+                                        "chat_name": f.get("chat_name") or "-",
+                                        "filename": f.get("filename"),
+                                        "content": f.get("content", ""),
+                                        "count": len(matches),
+                                        "preview": matches[0]["message"],
+                                    }
+                                )
+                        st.session_state["search_results"] = {
+                            "keyword": keyword,
+                            "job_id": selected_job["id"],
+                            "items": results,
+                            "total": len(raw_files),
+                        }
+
+            # download_button 클릭으로 rerun돼도 결과가 유지되도록 session_state 사용
+            sr = st.session_state.get("search_results")
+            if sr and sr.get("job_id") == selected_job["id"]:
+                items = sr["items"]
+                st.caption(
+                    f"'{sr['keyword']}' 검색 결과: {len(items)}개 파일 매칭 "
+                    f"(전체 {sr['total']}개 중)"
+                )
+                if not items:
+                    st.info("매칭되는 파일이 없습니다.")
+                else:
+                    header = st.columns([2, 4, 1, 1])
+                    header[0].markdown("**채팅명**")
+                    header[1].markdown("**미리보기**")
+                    header[2].markdown("**매칭**")
+                    header[3].markdown("**다운로드**")
+                    for r in items:
+                        c1, c2, c3, c4 = st.columns([2, 4, 1, 1])
+                        c1.write(r["chat_name"])
+                        c2.caption(r["preview"][:80])
+                        c3.write(f"{r['count']}건")
+                        c4.download_button(
+                            label="📥",
+                            data=r["content"].encode("utf-8-sig"),
+                            file_name=r["filename"],
+                            mime="text/csv",
+                            key=f"search_dl_{r['id']}",
                         )

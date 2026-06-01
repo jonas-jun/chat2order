@@ -348,3 +348,32 @@ def parse_csv(
         messages.append({"user": user, "message": message})
 
     return messages, timestamp
+
+
+def search_keyword_in_raw_csv(content: str, keyword: str) -> list[dict]:
+    """원본 CSV 텍스트의 MESSAGE 컬럼에서 keyword를 단순 부분 매칭으로 검색합니다.
+
+    반환: 매칭된 메시지 [{"user", "message", "date"}], 매칭이 없으면 빈 리스트.
+    - MESSAGE 컬럼만 대상으로 하며, exclude_messages/공백정규화는 적용하지 않습니다(raw 기준).
+    - 매칭 판정은 `keyword in message` (대소문자/공백 정규화·퍼지·단어경계 없음).
+    - 빈 키워드이거나 MESSAGE 컬럼이 없으면 빈 리스트를 반환합니다.
+    """
+    if not keyword:
+        return []
+
+    df = pd.read_csv(io.StringIO(content), encoding_errors="replace")
+    if "MESSAGE" not in df.columns:
+        return []
+
+    matches = []
+    for _, row in df.iterrows():
+        message = str(row.get("MESSAGE", ""))
+        if keyword in message:
+            matches.append(
+                {
+                    "user": row.get("USER", ""),
+                    "message": message,
+                    "date": row.get("DATE", ""),
+                }
+            )
+    return matches
