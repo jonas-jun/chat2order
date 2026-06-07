@@ -777,9 +777,11 @@ with tab_search:
                 "검색 키워드 (대화 내용에서 정확히 포함된 파일을 찾습니다)",
                 key="search_keyword_input",
                 placeholder="예: 블랙, 환불, 입금",
+                on_change=lambda: st.session_state.update({"search_trigger": True}),
             )
 
-            if st.button("🔍 검색", type="primary", key="search_run_btn"):
+            search_triggered = st.session_state.pop("search_trigger", False)
+            if st.button("🔍 검색", type="primary", key="search_run_btn") or search_triggered:
                 if not keyword.strip():
                     st.warning("검색 키워드를 입력해 주세요.")
                 else:
@@ -793,10 +795,13 @@ with tab_search:
                             "(채팅 검색 기능 적용 이전에 추출되었거나 DB 미연결 상태로 추출된 작업입니다.)"
                         )
                     else:
+                        live_date = None
+                        if selected_job.get("live_start_time"):
+                            live_date = selected_job["live_start_time"][:10]
                         results = []
                         for f in raw_files:
                             matches = search_keyword_in_raw_csv(
-                                f.get("content", ""), keyword
+                                f.get("content", ""), keyword, live_date=live_date
                             )
                             if matches:
                                 results.append(
@@ -805,8 +810,6 @@ with tab_search:
                                         "chat_name": f.get("chat_name") or "-",
                                         "filename": f.get("filename"),
                                         "content": f.get("content", ""),
-                                        "count": len(matches),
-                                        "preview": matches[0]["message"],
                                     }
                                 )
                         st.session_state["search_results"] = {
@@ -827,20 +830,40 @@ with tab_search:
                 if not items:
                     st.info("매칭되는 파일이 없습니다.")
                 else:
-                    header = st.columns([2, 4, 1, 1])
+                    page_size = 20
+                    total_pages = max(1, (len(items) + page_size - 1) // page_size)
+                    if "search_page" not in st.session_state:
+                        st.session_state["search_page"] = 0
+                    # 새 검색 시 페이지 초기화
+                    if st.session_state.get("search_results_keyword") != sr["keyword"]:
+                        st.session_state["search_page"] = 0
+                        st.session_state["search_results_keyword"] = sr["keyword"]
+                    page = st.session_state["search_page"]
+
+                    start = page * page_size
+                    end = start + page_size
+                    page_items = items[start:end]
+
+                    header = st.columns([6, 1])
                     header[0].markdown("**채팅명**")
-                    header[1].markdown("**미리보기**")
-                    header[2].markdown("**매칭**")
-                    header[3].markdown("**다운로드**")
-                    for r in items:
-                        c1, c2, c3, c4 = st.columns([2, 4, 1, 1])
-                        c1.write(r["chat_name"])
-                        c2.caption(r["preview"][:80])
-                        c3.write(f"{r['count']}건")
-                        c4.download_button(
+                    header[1].markdown("**다운로드**")
+                    for r in page_items:
+                        c1, c2 = st.columns([6, 1])
+                        c1.write(r["filename"])
+                        c2.download_button(
                             label="📥",
                             data=r["content"].encode("utf-8-sig"),
                             file_name=r["filename"],
                             mime="text/csv",
                             key=f"search_dl_{r['id']}",
                         )
+
+                    if total_pages > 1:
+                        st.caption(f"{page + 1} / {total_pages} 페이지")
+                        nav_cols = st.columns([1, 1, 8])
+                        if nav_cols[0].button("◀ 이전", key="search_prev", disabled=(page == 0)):
+                            st.session_state["search_page"] -= 1
+                            st.rerun()
+                        if nav_cols[1].button("다음 ▶", key="search_next", disabled=(page >= total_pages - 1)):
+                            st.session_state["search_page"] += 1
+                            st.rerun()
