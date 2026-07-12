@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import datetime
 
 from supabase import create_client, Client
@@ -56,19 +57,25 @@ def save_extracted_orders(
     order_number, product, option, volume, chat_name,
     order_name, phone_number, address, search_address, zip_code
     """
+    def clean(value):
+        """pandas가 결측치를 float NaN으로 채운 경우 JSON 직렬화가 가능하도록 None으로 변환합니다."""
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return value
+
     rows = [
         {
             "job_id": job_id,
-            "order_number": o.get("order_number"),
-            "product": o.get("product"),
-            "option": o.get("option"),
-            "volume": o.get("volume"),
-            "chat_name": o.get("chat_name"),
-            "order_name": o.get("order_name"),
-            "phone_number": o.get("phone_number"),
-            "address": o.get("address"),
-            "search_address": o.get("search_address"),
-            "zip_code": o.get("zip_code"),
+            "order_number": clean(o.get("order_number")),
+            "product": clean(o.get("product")),
+            "option": clean(o.get("option")),
+            "volume": clean(o.get("volume")),
+            "chat_name": clean(o.get("chat_name")),
+            "order_name": clean(o.get("order_name")),
+            "phone_number": clean(o.get("phone_number")),
+            "address": clean(o.get("address")),
+            "search_address": clean(o.get("search_address")),
+            "zip_code": clean(o.get("zip_code")),
             "created_at": datetime.now().isoformat(),
         }
         for o in orders

@@ -113,6 +113,9 @@ def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
 
 def format_phone_number(phone: str | None) -> str | None:
     """전화번호에서 숫자만 추출 후 010-XXXX-XXXX 형식으로 변환합니다."""
+    if phone is None or pd.isna(phone):
+        return None
+    phone = str(phone)
     if not phone:
         return phone
     digits = re.sub(r"\D", "", phone)
