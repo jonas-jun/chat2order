@@ -72,7 +72,7 @@ if not st.session_state["logged_in_user"]:
             email = st.text_input("이메일")
             password = st.text_input("비밀번호", type="password")
             submit_button = st.form_submit_button(
-                "LogIn", use_container_width=True, type="primary"
+                "LogIn", width="stretch", type="primary"
             )
 
             if submit_button:
@@ -222,7 +222,7 @@ with tab_order:
     time_after = datetime.datetime.combine(start_date, start_time)
     time_before = datetime.datetime.combine(end_date, end_time)
 
-    if st.button("🚀 주문서 추출 실행", type="primary", use_container_width=True):
+    if st.button("🚀 주문서 추출 실행", type="primary", width="stretch"):
         if not st.session_state.get("api_key"):
             st.warning("API Key가 할당되지 않았습니다. 관리자에게 문의하세요.")
         elif not catalog_file:
@@ -400,7 +400,7 @@ with tab_order:
                 df = df.rename(columns=rename)
                 df = df.reindex(columns=list(col_map.keys()), fill_value="")
 
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width="stretch")
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(
@@ -481,7 +481,7 @@ with tab_catalog:
         preview_df = pd.DataFrame(preview_rows)
         preview_df.index = preview_df.index + 1
         preview_df.index.name = "#"
-        st.dataframe(preview_df, use_container_width=True)
+        st.dataframe(preview_df, width="stretch")
 
         st.markdown(
             '<span class="step-badge">3</span> **카탈로그 다운로드**',
@@ -497,7 +497,7 @@ with tab_catalog:
             file_name=f"catalog_{timestamp}.json",
             mime="application/json",
             type="primary",
-            use_container_width=True,
+            width="stretch",
         )
 
 # ===== 탭 3: 우편번호 추출 =====
@@ -528,13 +528,13 @@ with tab_zipcode:
                 st.info(
                     "파일에 이미 '우편번호' 컬럼이 있습니다. 조회 결과로 덮어씁니다."
                 )
-            st.dataframe(zip_df.head(10), use_container_width=True)
+            st.dataframe(zip_df.head(10), width="stretch")
             st.caption(f"총 {len(zip_df)}건")
 
             if st.button(
                 "📮 우편번호 조회 실행",
                 type="primary",
-                use_container_width=True,
+                width="stretch",
                 key="zip_lookup_btn",
             ):
                 if not st.session_state.get("api_key"):
@@ -593,7 +593,7 @@ with tab_zipcode:
                     with stat_cols[2]:
                         st.metric("미조회", missed)
 
-                    st.dataframe(zip_df, use_container_width=True)
+                    st.dataframe(zip_df, width="stretch")
 
                     zip_output = io.BytesIO()
                     with pd.ExcelWriter(zip_output, engine="openpyxl") as zwriter:
@@ -672,7 +672,7 @@ with tab_history:
                 if "우편번호" in hist_df.columns:
                     hist_df["우편번호"] = hist_df["우편번호"].apply(normalize_zip_code)
 
-                st.dataframe(hist_df.head(20), use_container_width=True)
+                st.dataframe(hist_df.head(20), width="stretch")
                 st.caption(f"총 {len(hist_df)}건 (최대 20건 미리보기)")
 
                 hist_output = io.BytesIO()
@@ -705,7 +705,7 @@ with tab_history:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         type="primary",
                         key="hist_download_btn",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
                 with col_dl2:
@@ -731,14 +731,14 @@ with tab_history:
                             mime="application/json",
                             type="secondary",
                             key="hist_catalog_btn",
-                            use_container_width=True,
+                            width="stretch",
                         )
                     else:
                         st.button(
                             "📋 카탈로그 정보 없음",
                             disabled=True,
                             key="hist_catalog_btn_disabled",
-                            use_container_width=True,
+                            width="stretch",
                         )
 
 # ===== 탭 5: 채팅 검색 =====
