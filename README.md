@@ -17,16 +17,20 @@ MarketMate_Chat2Order/
 ├── app.py                        # Streamlit 웹 앱 (메인 UI)
 ├── main.py                       # CLI 실행 진입점
 ├── services.py                   # 핵심 비즈니스 로직 (파싱, LLM 호출, 후처리)
+├── settings.py                   # 환경변수 및 프롬프트 파일 로딩
 ├── models.py                     # Pydantic 데이터 모델
 ├── database.py                   # Supabase 연동 (인증, 주문 저장, 학습 데이터 저장)
 ├── config.yaml                   # 공개 설정 파일 (모델, 출력 컬럼, CSV 파싱 등)
+├── .env.example                  # Railway 환경변수 이름 예시
+├── prompts/                      # Git으로 관리하는 LLM 프롬프트
+│   ├── order_extraction.txt
+│   └── address_to_search.txt
 ├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
 ├── requirements.txt
 ├── styles/
 │   └── main.css                  # Streamlit 커스텀 CSS
 └── .streamlit/
-    ├── config.toml               # Streamlit 테마 설정
-    └── secrets.toml              # 비공개 설정 (DB 접속 정보, 우편번호 API 키, 프롬프트)
+    └── config.toml               # Streamlit 테마 설정
 ```
 
 ---
@@ -40,6 +44,63 @@ streamlit run app.py
 ```
 
 앱 실행 후 로그인이 필요합니다. 계정은 Supabase `accounts` 테이블에서 관리합니다.
+
+로컬 실행 전 필요한 환경변수를 설정합니다.
+
+```bash
+export SUPABASE_URL="<SUPABASE_URL>"
+export SUPABASE_KEY="<SUPABASE_KEY>"
+export JUSO_API_KEY="<JUSO_API_KEY>"
+streamlit run app.py
+```
+
+### Railway 배포 설정
+
+Railway의 Streamlit 서비스에서 **Variables** 탭에 다음 변수를 등록한 후 배포합니다.
+
+| 환경변수 | 설명 | 필수 여부 |
+|---|---|---|
+| `SUPABASE_URL` | Supabase 프로젝트 URL | 웹 로그인 사용 시 필수 |
+| `SUPABASE_KEY` | Supabase API Key | 웹 로그인 사용 시 필수 |
+| `JUSO_API_KEY` | 행정안전부 도로명주소 API Key | 우편번호 조회 시 필수 |
+
+`.env.example`은 필요한 변수 이름을 보여주는 템플릿이며 실제 비밀값을 저장하거나 Git에 커밋하지 않습니다.
+
+### Railway Variables로 로컬 실행
+
+Railway CLI는 Python 패키지가 아니므로 npm으로 Conda 환경에 설치합니다. Node.js 16 이상이 필요합니다.
+
+```bash
+conda activate c2o
+npm install --global --prefix "$CONDA_PREFIX" @railway/cli@5.26.1
+railway --version
+```
+
+최초 한 번 Railway에 로그인하고 현재 저장소를 배포 프로젝트 및 서비스에 연결합니다.
+
+```bash
+railway login
+railway link
+railway status
+```
+
+브라우저를 열 수 없는 환경에서는 `railway login --browserless`를 사용합니다. 연결이 끝나면 Railway 서비스의 Variables를 로컬 Streamlit 프로세스에 주입하여 실행할 수 있습니다.
+
+```bash
+conda activate c2o
+railway run streamlit run app.py
+```
+
+`railway run`은 연결된 프로젝트·환경·서비스를 기본으로 사용합니다. 대상을 명시하려면 다음과 같이 실행합니다.
+
+```bash
+railway run \
+  --environment production \
+  --service <STREAMLIT_SERVICE_NAME> \
+  streamlit run app.py
+```
+
+이 방식으로 전달된 `SUPABASE_URL`, `SUPABASE_KEY`, `JUSO_API_KEY`는 `app.py`에서 일반 환경변수로 읽습니다. Railway에서 Sealed 처리한 변수는 `railway run`으로 전달되지 않으므로 로컬 테스트가 필요하면 별도의 비밀이 아닌 개발 환경 변수를 사용하세요.
 
 ### CLI
 
@@ -68,22 +129,22 @@ python3 main.py \
 |---|---|
 | `gemini.model` | 사용할 Gemini 모델명 |
 | `gemini.temperature` | LLM 응답 temperature |
+| `prompts.order_extraction` | 주문 추출 프롬프트 파일 경로 |
+| `prompts.address_to_search` | 주소 정제 프롬프트 파일 경로 |
 | `output.file_name` | 출력 엑셀 파일명 |
 | `output.sheet_name` | 엑셀 시트명 |
 | `output_columns` | 출력 컬럼 매핑 (출력명: 원본필드명) |
 | `csv.filename_prefix` | 카카오톡 채널 CSV 파일명 접두사 |
 | `csv.exclude_messages` | 파싱 시 제외할 시스템 메시지 목록 |
 
-### `.streamlit/secrets.toml` (비공개)
+### 프롬프트
 
-| 항목 | 설명 |
-|---|---|
-| `juso.api_key` | 행정안전부 도로명주소 API 키 (우편번호 자동 조회용) |
-| `supabase.url` | Supabase 프로젝트 URL |
-| `supabase.key` | Supabase API 키 |
-| `prompt.order_extraction` | 주문 추출 프롬프트 템플릿 (`{catalog}`, `{chat}` 플레이스홀더) |
-| `prompt.order_extraction2` | 주문 추출 프롬프트 v2 |
-| `prompt.address_to_search` | 도로명주소 추출 프롬프트 (`{address}` 플레이스홀더) |
+프롬프트는 `prompts/` 디렉터리에서 Git으로 버전 관리합니다.
+
+- `prompts/order_extraction.txt`: `{catalog}`, `{chat}` 플레이스홀더 사용
+- `prompts/address_to_search.txt`: `{address}` 플레이스홀더 사용
+
+플레이스홀더는 실행 시 실제 입력 데이터로 치환되므로 삭제하지 마세요.
 
 ### Supabase `accounts` 테이블
 
@@ -177,7 +238,7 @@ Excel 파일 (`orders_extracted.xlsx`)
 | 수령자 | 배송 받을 실제 이름 (고객이 별도 명시한 경우만) |
 | 전화번호 | 연락처 (`010-XXXX-XXXX` 형식 자동 정규화) |
 | 주소 | 고객이 입력한 전체 배송지 주소 |
-| 우편번호 | 도로명주소 API 자동 조회 (`juso.api_key` 설정 시 활성화) |
+| 우편번호 | 도로명주소 API 자동 조회 (`JUSO_API_KEY` 설정 시 활성화) |
 
 ---
 
@@ -216,6 +277,8 @@ Excel 출력 (.xlsx)
 
 ## 보안 유의사항
 
-- `.streamlit/secrets.toml`은 `.gitignore`에 등록되어 비공개로 관리됩니다. (DB 접속 정보, 우편번호 API 키, 프롬프트 포함)
+- API 키와 DB 접속 정보는 Railway Variables 등 실행 환경의 환경변수로 관리하고 Git에 커밋하지 않습니다.
+- `.streamlit/secrets.toml`과 흔한 오타인 `.streamlit/secret.toml`은 모두 `.gitignore`에 등록되어 있습니다.
+- 프롬프트에는 비밀값이나 고객 개인정보를 넣지 않습니다.
 - 계정 정보 및 Gemini API Key는 Supabase `accounts` 테이블에서 관리하며, 클라이언트에 노출되지 않습니다.
 - 실제 고객 개인정보(이름, 연락처, 주소)가 포함된 원본 데이터는 프로토타입 환경에 업로드하지 마세요.

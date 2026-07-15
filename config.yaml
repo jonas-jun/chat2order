@@ -5,6 +5,11 @@ gemini:
   model: "gemini-3.1-flash-lite"
   temperature: 0.1
 
+# Git으로 버전 관리하는 프롬프트 파일
+prompts:
+  order_extraction: "prompts/order_extraction.txt"
+  address_to_search: "prompts/address_to_search.txt"
+
 # 출력 파일 설정
 output:
   file_name: "orders_extracted.xlsx"
