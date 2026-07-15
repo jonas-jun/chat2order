@@ -6,7 +6,7 @@
 
 ## 기술 스택
 
-- Python 3.10+, Streamlit, Google GenAI SDK (Gemini), Pandas, Pydantic, Requests, Supabase
+- Python 3.13.14, Streamlit, Google GenAI SDK (Gemini), Pandas, Pydantic, Requests, Supabase
 
 ---
 
@@ -40,7 +40,9 @@ MarketMate_Chat2Order/
 ### Streamlit 웹 앱
 
 ```bash
-streamlit run app.py
+conda activate c2o
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
 ```
 
 앱 실행 후 로그인이 필요합니다. 계정은 Supabase `accounts` 테이블에서 관리합니다.
@@ -51,7 +53,7 @@ streamlit run app.py
 export SUPABASE_URL="<SUPABASE_URL>"
 export SUPABASE_KEY="<SUPABASE_KEY>"
 export JUSO_API_KEY="<JUSO_API_KEY>"
-streamlit run app.py
+python -m streamlit run app.py
 ```
 
 ### Railway 배포 설정
@@ -88,7 +90,7 @@ railway status
 
 ```bash
 conda activate c2o
-railway run streamlit run app.py
+railway run python -m streamlit run app.py
 ```
 
 `railway run`은 연결된 프로젝트·환경·서비스를 기본으로 사용합니다. 대상을 명시하려면 다음과 같이 실행합니다.
@@ -97,7 +99,7 @@ railway run streamlit run app.py
 railway run \
   --environment production \
   --service <STREAMLIT_SERVICE_NAME> \
-  streamlit run app.py
+  python -m streamlit run app.py
 ```
 
 이 방식으로 전달된 `SUPABASE_URL`, `SUPABASE_KEY`, `JUSO_API_KEY`는 `app.py`에서 일반 환경변수로 읽습니다. Railway에서 Sealed 처리한 변수는 `railway run`으로 전달되지 않으므로 로컬 테스트가 필요하면 별도의 비밀이 아닌 개발 환경 변수를 사용하세요.

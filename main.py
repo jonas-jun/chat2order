@@ -121,7 +121,7 @@ def main():
         print("[WARN] 추출된 주문 데이터가 없습니다.")
         return
 
-    df = pd.DataFrame(all_extracted_orders)
+    df = pd.DataFrame(all_extracted_orders, dtype=object)
     df["phone_number"] = df["phone_number"].apply(format_phone_number)
     if "zip_code" in df.columns:
         df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
