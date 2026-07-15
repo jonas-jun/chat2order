@@ -6,6 +6,8 @@ import yaml
 import pandas as pd
 import streamlit as st
 
+from settings import get_env, load_prompt
+
 from services import (
     parse_catalog_json,
     generate_catalog_from_csv,
@@ -41,8 +43,8 @@ with open("styles/main.css", encoding="utf-8") as css_file:
     st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
 
 # --- DB 연결 (로그인 전에 초기화 필요) ---
-supabase_url = st.secrets.get("supabase", {}).get("url", "")
-supabase_key = st.secrets.get("supabase", {}).get("key", "")
+supabase_url = get_env("SUPABASE_URL")
+supabase_key = get_env("SUPABASE_KEY")
 db_conn = (
     get_connection(supabase_url, supabase_key)
     if supabase_url and supabase_key
@@ -117,7 +119,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-juso_api_key = st.secrets.get("juso", {}).get("api_key", "")
+juso_api_key = get_env("JUSO_API_KEY")
+order_extraction_prompt = load_prompt(config["prompts"]["order_extraction"])
+address_to_search_prompt = load_prompt(config["prompts"]["address_to_search"])
 
 # 사이드바: API 키 상태 표시
 with st.sidebar:
@@ -305,7 +309,7 @@ with tab_order:
                             chat_data,
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
-                            prompt_template=st.secrets["prompt"]["order_extraction2"],
+                            prompt_template=order_extraction_prompt,
                         )
                         if db_conn and job_id:
                             save_extract_call_log(
@@ -561,9 +565,7 @@ with tab_zipcode:
                             api_key=st.session_state["api_key"],
                             model=config["gemini"]["model"],
                             temperature=config["gemini"]["temperature"],
-                            prompt_template=st.secrets.get("prompt", {}).get(
-                                "address_to_search", ""
-                            ),
+                            prompt_template=address_to_search_prompt,
                             progress_callback=_progress,
                         )
                         if has_zip_col:

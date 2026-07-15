@@ -6,7 +6,6 @@ CLI 실행 예시:
 
 import argparse
 import io
-import tomllib
 from pathlib import Path
 
 import pandas as pd
@@ -22,16 +21,12 @@ from services import (
     extract_timestamp,
     extract_chat_name,
 )
+from settings import get_env, load_prompt
 
 
 def load_config(path: str = "config.yaml") -> dict:
     with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f)
-
-
-def load_secrets(path: str = ".streamlit/secrets.toml") -> dict:
-    with open(path, "rb") as f:
-        return tomllib.load(f)
 
 
 class FileWrapper:
@@ -64,7 +59,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config)
-    secrets = load_secrets()
+    order_extraction_prompt = load_prompt(config["prompts"]["order_extraction"])
     output_path = args.output or config["output"]["file_name"]
 
     print(f"[INFO] 카탈로그 파싱 중: {args.catalog}")
@@ -94,7 +89,7 @@ def main():
                 chat_data,
                 model=config["gemini"]["model"],
                 temperature=config["gemini"]["temperature"],
-                prompt_template=secrets["prompt"]["order_extraction2"],
+                prompt_template=order_extraction_prompt,
             )
         except RuntimeError as e:
             print(f"[ERROR] {e}")
@@ -131,7 +126,7 @@ def main():
     if "zip_code" in df.columns:
         df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
-    juso_api_key = config["juso"]["api_key"]
+    juso_api_key = get_env("JUSO_API_KEY")
     if juso_api_key:
         print("[INFO] 우편번호 조회 중...")
         df["zip_code"] = df["search_address"].apply(
