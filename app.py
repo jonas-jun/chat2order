@@ -376,7 +376,7 @@ with tab_order:
                 )
 
             if all_extracted_orders:
-                df = pd.DataFrame(all_extracted_orders)
+                df = pd.DataFrame(all_extracted_orders, dtype=object)
                 df["phone_number"] = df["phone_number"].apply(format_phone_number)
                 if "zip_code" in df.columns:
                     df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
@@ -482,7 +482,7 @@ with tab_catalog:
                     "옵션 수": len(options),
                 }
             )
-        preview_df = pd.DataFrame(preview_rows)
+        preview_df = pd.DataFrame(preview_rows, dtype=object)
         preview_df.index = preview_df.index + 1
         preview_df.index.name = "#"
         st.dataframe(preview_df, width="stretch")
@@ -657,7 +657,7 @@ with tab_history:
             if not orders:
                 st.info("해당 이력에 저장된 주문 데이터가 없습니다.")
             else:
-                hist_df = pd.DataFrame(orders)
+                hist_df = pd.DataFrame(orders, dtype=object)
                 hist_df = hist_df.drop(
                     columns=[
                         c
