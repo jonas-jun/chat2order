@@ -4,6 +4,9 @@
 
 판매자-고객 메신저 대화와 상품 카탈로그를 기반으로 LLM(Gemini API)이 주문 정보를 추출하여 엑셀 파일로 자동 변환합니다.
 
+## 서비스
+- https://chat2order.up.railway.app/
+
 ## 기술 스택
 
 - Python 3.13.14, Streamlit, Google GenAI SDK (Gemini), Pandas, Pydantic, Requests, Supabase
