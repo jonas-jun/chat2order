@@ -56,6 +56,9 @@ def save_extracted_orders(
     orders 리스트의 각 dict는 다음 키를 포함해야 합니다:
     order_number, product, option, volume, chat_name,
     order_name, phone_number, address, search_address, zip_code
+    raw_product, raw_option, mapping_status는 선택 키이며 CatalogResolver가
+    확정한 건(exact/alias/typo/inferred)만 이 함수로 저장해야 합니다.
+    unresolved 건은 save_unresolved_items()로 별도 저장합니다.
     """
     def clean(value):
         """pandas가 결측치를 float NaN으로 채운 경우 JSON 직렬화가 가능하도록 None으로 변환합니다."""
@@ -76,11 +79,52 @@ def save_extracted_orders(
             "address": clean(o.get("address")),
             "search_address": clean(o.get("search_address")),
             "zip_code": clean(o.get("zip_code")),
+            "raw_product": clean(o.get("raw_product")),
+            "raw_option": clean(o.get("raw_option")),
+            "mapping_status": clean(o.get("mapping_status")),
             "created_at": datetime.now().isoformat(),
         }
         for o in orders
     ]
     conn.table("extracted_orders").insert(rows).execute()
+
+
+def save_unresolved_items(
+    conn: Client,
+    job_id: str,
+    items: list[dict],
+) -> None:
+    """unresolved_items 테이블에 resolver가 확정하지 못한 항목들을 일괄 삽입합니다.
+
+    items 리스트의 각 dict는 다음 키를 포함해야 합니다:
+    chat_name, raw_product, raw_option, volume, candidate_products,
+    mapping_reason, order_name, phone_number, address
+    """
+    if not items:
+        return
+
+    def clean(value):
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return value
+
+    rows = [
+        {
+            "job_id": job_id,
+            "chat_name": clean(i.get("chat_name")),
+            "raw_product": clean(i.get("raw_product")),
+            "raw_option": clean(i.get("raw_option")),
+            "volume": clean(i.get("volume")),
+            "candidate_products": i.get("candidate_products") or [],
+            "mapping_reason": clean(i.get("mapping_reason")),
+            "order_name": clean(i.get("order_name")),
+            "phone_number": clean(i.get("phone_number")),
+            "address": clean(i.get("address")),
+            "created_at": datetime.now().isoformat(),
+        }
+        for i in items
+    ]
+    conn.table("unresolved_items").insert(rows).execute()
 
 
 def save_training_record(
