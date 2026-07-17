@@ -13,6 +13,7 @@ from services import (
     generate_catalog_from_csv,
     parse_csv,
     extract_orders_from_chat,
+    resolve_extracted_items,
     lookup_zip_code,
     format_phone_number,
     normalize_zip_code,
@@ -26,6 +27,7 @@ from database import (
     create_extraction_job,
     update_extraction_job_total,
     save_extracted_orders,
+    save_unresolved_items,
     save_training_record,
     save_extract_call_log,
     get_monthly_api_call_count,
@@ -35,6 +37,13 @@ from database import (
     save_raw_chat_files,
     get_raw_files_by_job,
 )
+
+MAPPING_STATUS_LABELS = {
+    "exact": "✅ 확정",
+    "alias": "✅ 확정",
+    "typo": "🔧 자동보정",
+    "inferred": "🔧 자동보정",
+}
 
 # --- UI 구성 ---
 st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
@@ -258,6 +267,7 @@ with tab_order:
                 st.write("📋 카탈로그를 파싱 중")
                 catalog_data = parse_catalog_json(catalog_file)
                 all_extracted_orders = []
+                all_unresolved_rows = []
                 raw_files_buffer = []
 
                 job_id = None
@@ -340,9 +350,38 @@ with tab_order:
                                 filename_prefix=config["csv"]["filename_prefix"],
                             )
                             order_number = f"{today_str}{seq:03d}"
-                            for item in items:
+                            # LLM이 반환한 product/option은 힌트일 뿐이며, 최종 확정은
+                            # 항상 CatalogResolver를 통과시킨다 (issue #61).
+                            resolved_items = resolve_extracted_items(
+                                items, catalog_data
+                            )
+                            for resolved in resolved_items:
+                                if resolved.mapping_status == "unresolved":
+                                    all_unresolved_rows.append(
+                                        {
+                                            "chat_name": chat_name,
+                                            "raw_product": resolved.raw_product,
+                                            "raw_option": resolved.raw_option,
+                                            "volume": resolved.volume,
+                                            "candidate_products": resolved.candidate_products,
+                                            "mapping_reason": resolved.mapping_reason,
+                                            "order_name": extracted_data.get(
+                                                "order_name"
+                                            ),
+                                            "phone_number": extracted_data.get(
+                                                "phone_number"
+                                            ),
+                                            "address": extracted_data.get("address"),
+                                        }
+                                    )
+                                    continue
                                 row = {
-                                    **item,
+                                    "product": resolved.product,
+                                    "option": resolved.option,
+                                    "volume": resolved.volume,
+                                    "raw_product": resolved.raw_product,
+                                    "raw_option": resolved.raw_option,
+                                    "mapping_status": resolved.mapping_status,
                                     "order_name": extracted_data.get("order_name"),
                                     "phone_number": extracted_data.get("phone_number"),
                                     "address": extracted_data.get("address"),
@@ -368,12 +407,26 @@ with tab_order:
                         files=raw_files_buffer,
                     )
 
+                if db_conn and job_id and all_unresolved_rows:
+                    save_unresolved_items(
+                        conn=db_conn,
+                        job_id=job_id,
+                        items=all_unresolved_rows,
+                    )
+
                 if juso_api_key:
                     st.write("📮 우편번호 조회 중")
 
                 status.update(
                     label="🎉 주문 데이터 추출이 완료되었습니다!", state="complete"
                 )
+
+            unresolved_df = pd.DataFrame(all_unresolved_rows, dtype=object)
+            if not unresolved_df.empty and "candidate_products" in unresolved_df.columns:
+                # openpyxl은 list 셀 값을 쓸 수 없으므로 표시/저장 전 문자열로 변환
+                unresolved_df["candidate_products"] = unresolved_df[
+                    "candidate_products"
+                ].apply(lambda v: ", ".join(v) if isinstance(v, list) else (v or ""))
 
             if all_extracted_orders:
                 df = pd.DataFrame(all_extracted_orders, dtype=object)
@@ -401,10 +454,32 @@ with tab_order:
 
                 col_map = config["output_columns"]
                 rename = {v: k for k, v in col_map.items() if v}
+
+                # 화면 표시용: 매핑 상태(확정/자동보정)와 원문 대조 컬럼을 추가한 사본.
+                # 발주용 Excel 본시트 양식(9컬럼 고정)에는 영향을 주지 않는다.
+                display_df = df.copy()
+                display_df["매핑"] = (
+                    display_df["mapping_status"]
+                    .map(MAPPING_STATUS_LABELS)
+                    .fillna("✅ 확정")
+                )
+                display_df["원문"] = display_df.apply(
+                    lambda r: (
+                        f"{r.get('raw_product') or ''} {r.get('raw_option') or ''}".strip()
+                        if r.get("mapping_status") in ("typo", "inferred")
+                        else ""
+                    ),
+                    axis=1,
+                )
+                display_df = display_df.rename(columns=rename)
+                display_df = display_df.reindex(
+                    columns=list(col_map.keys()) + ["매핑", "원문"], fill_value=""
+                )
+                st.dataframe(display_df, width="stretch")
+
+                # 저장/다운로드용: 기존 발주 양식 그대로 유지.
                 df = df.rename(columns=rename)
                 df = df.reindex(columns=list(col_map.keys()), fill_value="")
-
-                st.dataframe(df, width="stretch")
 
                 output = io.BytesIO()
                 with pd.ExcelWriter(
@@ -424,6 +499,11 @@ with tab_order:
                         ):
                             row[0].number_format = "@"
 
+                    if not unresolved_df.empty:
+                        unresolved_df.to_excel(
+                            writer, index=False, sheet_name="검토필요"
+                        )
+
                 st.download_button(
                     label="📥 엑셀 파일(.xlsx) 다운로드",
                     data=output.getvalue(),
@@ -431,9 +511,28 @@ with tab_order:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     type="primary",
                 )
-            else:
+            elif unresolved_df.empty:
                 st.error(
                     "추출된 데이터가 없습니다. 원본 데이터나 API 상태를 확인해 주세요."
+                )
+
+            if not unresolved_df.empty:
+                st.warning(
+                    f"⚠️ {len(unresolved_df)}건은 자동 매핑에 실패하여 검토가 필요합니다. "
+                    "임의로 확정하지 않았으니 아래 내역을 확인해 주세요."
+                )
+                st.dataframe(
+                    unresolved_df[
+                        [
+                            "chat_name",
+                            "raw_product",
+                            "raw_option",
+                            "volume",
+                            "candidate_products",
+                            "mapping_reason",
+                        ]
+                    ],
+                    width="stretch",
                 )
 
 # ===== 탭 2: 카탈로그 생성 =====

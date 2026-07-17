@@ -11,7 +11,8 @@ import pandas as pd
 from google import genai
 from google.genai import types
 
-from models import OrderExtractionResult
+from models import OrderExtractionResult, ResolvedProductItem
+from resolver import CatalogIndex, catalog_list_to_dict, resolve_catalog_item
 
 
 def parse_custom_jsonl(
@@ -85,6 +86,29 @@ def extract_orders_from_chat(
         raise RuntimeError(
             f"Gemini API 호출 중 오류가 발생했습니다: {e}\n\n[Traceback]\n{tb}"
         ) from e
+
+
+def resolve_extracted_items(
+    items: list[dict],
+    catalog_data: list,
+) -> list[ResolvedProductItem]:
+    """LLM이 추출한 items(raw_product/raw_option 포함)를 CatalogResolver로 확정한다.
+
+    LLM이 반환한 product/option은 힌트일 뿐 신뢰하지 않고, 항상 이 함수를 거쳐
+    카탈로그와 대조한 결과만 저장 대상으로 사용한다. `[주문완료]` 유무와 무관하게
+    항상 적용한다.
+    """
+    catalog = catalog_list_to_dict(catalog_data)
+    index = CatalogIndex.build(catalog)
+    return [
+        resolve_catalog_item(
+            raw_product=item.get("raw_product"),
+            raw_option=item.get("raw_option"),
+            volume=item.get("volume"),
+            index=index,
+        )
+        for item in items
+    ]
 
 
 def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
@@ -345,7 +369,12 @@ def parse_csv(
     messages = []
     for _, row in df.iterrows():
         user = row.get("USER", "")
-        message = re.sub(r"\s+", " ", str(row.get("MESSAGE", ""))).strip()
+        raw_message = str(row.get("MESSAGE", ""))
+        lines = [
+            re.sub(r"[^\S\r\n]+", " ", line).strip()
+            for line in raw_message.splitlines()
+        ]
+        message = "\n".join(line for line in lines if line)
         if any(excl in message for excl in exclude_messages):
             continue
         messages.append({"user": user, "message": message})
