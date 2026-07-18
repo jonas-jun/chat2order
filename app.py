@@ -1,970 +1,152 @@
-import io
-import json
-import datetime
 from pathlib import Path
-import yaml
-import pandas as pd
+
 import streamlit as st
+import yaml
 
+from database import authenticate_user, get_connection, get_monthly_api_call_count
 from settings import get_env, load_prompt
+from ui import tab_catalog, tab_history, tab_order, tab_search, tab_zipcode
+from ui.common import AppContext
 
-from services import (
-    parse_catalog_json,
-    generate_catalog_from_csv,
-    parse_csv,
-    extract_orders_from_chat,
-    resolve_extracted_items,
-    lookup_zip_code,
-    format_phone_number,
-    normalize_zip_code,
-    batch_lookup_zip_codes,
-    extract_chat_name,
-    search_keyword_in_raw_csv,
-)
-from database import (
-    get_connection,
-    authenticate_user,
-    create_extraction_job,
-    update_extraction_job_total,
-    save_extracted_orders,
-    save_unresolved_items,
-    save_training_record,
-    save_extract_call_log,
-    get_monthly_api_call_count,
-    get_jobs_by_user,
-    get_orders_by_job,
-    get_catalog_by_job,
-    save_raw_chat_files,
-    get_raw_files_by_job,
-)
 
-MAPPING_STATUS_LABELS = {
-    "exact": "✅ 확정",
-    "alias": "✅ 확정",
-    "typo": "🔧 자동보정",
-    "inferred": "🔧 자동보정",
-}
+@st.cache_resource
+def get_db():
+    url = get_env("SUPABASE_URL")
+    key = get_env("SUPABASE_KEY")
+    return get_connection(url, key) if url and key else None
 
-# --- UI 구성 ---
-st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
 
-with open("styles/main.css", encoding="utf-8") as css_file:
-    st.markdown(f"<style>{css_file.read()}</style>", unsafe_allow_html=True)
+@st.cache_data
+def load_config(path: str = "config.yaml") -> dict:
+    return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
 
-# --- DB 연결 (로그인 전에 초기화 필요) ---
-supabase_url = get_env("SUPABASE_URL")
-supabase_key = get_env("SUPABASE_KEY")
-db_conn = (
-    get_connection(supabase_url, supabase_key)
-    if supabase_url and supabase_key
-    else None
-)
 
-if "logged_in_user" not in st.session_state:
-    st.session_state["logged_in_user"] = None
-if "api_key" not in st.session_state:
-    st.session_state["api_key"] = None
-if "monthly_extract_limit" not in st.session_state:
-    st.session_state["monthly_extract_limit"] = None
+@st.cache_data
+def load_static_text(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8")
 
-if not st.session_state["logged_in_user"]:
-    col_left, col_center, col_right = st.columns([1, 2, 1])
-    with col_center:
+
+@st.cache_data
+def cached_prompt(path: str) -> str:
+    return load_prompt(path)
+
+
+@st.cache_data(ttl=60)
+def monthly_api_usage(user_id: str) -> int:
+    connection = get_db()
+    return get_monthly_api_call_count(connection, user_id) if connection else 0
+
+
+def render_login(db_conn) -> None:
+    _, center, _ = st.columns([1, 2, 1])
+    with center:
         st.markdown(
             """
-        <div style="text-align:center; padding:2rem 0;">
-            <h1 style="color:#FF6B35;">Chat2Order</h1>
-            <p style="color:#888;">로그인하여 시작하세요</p>
-        </div>
-        """,
+            <div style="text-align:center; padding:2rem 0;">
+              <h1 style="color:#FF6B35;">Chat2Order</h1>
+              <p style="color:#888;">로그인하여 시작하세요</p>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
         with st.form("login_form"):
             email = st.text_input("이메일")
             password = st.text_input("비밀번호", type="password")
-            submit_button = st.form_submit_button(
+            submitted = st.form_submit_button(
                 "LogIn", width="stretch", type="primary"
             )
-
-            if submit_button:
-                if not db_conn:
-                    st.error("DB 연결이 설정되지 않았습니다. 관리자에게 문의하세요.")
-                else:
-                    account_info = authenticate_user(
-                        db_conn, user_id=email, password=password
-                    )
-                    if account_info:
-                        st.session_state["api_key"] = account_info["gemini_api_key"]
-                        st.session_state["monthly_extract_limit"] = account_info[
-                            "monthly_extract_limit"
-                        ]
-                        st.session_state["logged_in_user"] = email
-                        st.rerun()
-                    else:
-                        st.error(
-                            "이메일/비밀번호가 올바르지 않거나 비활성화된 계정입니다."
-                        )
-    st.stop()  # 로그인되지 않은 경우 아래 메인 앱 코드 실행 방지
-
-# 로그인된 사용자 표시 및 로그아웃 버튼 (사이드바)
-with st.sidebar:
-    st.write(f"👤 **{st.session_state['logged_in_user']}**님 환영합니다.")
-    if st.button("LogOut"):
-        st.session_state["logged_in_user"] = None
+        if not submitted:
+            return
+        if not db_conn:
+            st.error("DB 연결이 설정되지 않았습니다. 관리자에게 문의하세요.")
+            return
+        account = authenticate_user(db_conn, user_id=email, password=password)
+        if not account:
+            st.error("이메일/비밀번호가 올바르지 않거나 비활성화된 계정입니다.")
+            return
+        st.session_state["api_key"] = account["gemini_api_key"]
+        st.session_state["monthly_extract_limit"] = account["monthly_extract_limit"]
+        st.session_state["logged_in_user"] = email
         st.rerun()
-    st.divider()
 
 
-# --- 설정 파일 로드 ---
-with open("config.yaml", "r", encoding="utf-8") as f:
-    config = yaml.safe_load(f)
-
-st.markdown(
-    "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 C2O가 알아서 엑셀로 만들어 드립니다.",
-    unsafe_allow_html=True,
-)
-
-juso_api_key = get_env("JUSO_API_KEY")
-order_extraction_prompt = load_prompt(config["prompts"]["order_extraction"])
-address_to_search_prompt = load_prompt(config["prompts"]["address_to_search"])
-
-# 사이드바: API 키 상태 표시
-with st.sidebar:
-    st.header("Account State")
-    if st.session_state.get("api_key"):
-        st.success("✅ 관리자 승인 완료")  # gemini api key 연동 완료
-    else:
-        st.error("❌ API Key 연동 실패")
-
-    monthly_limit = st.session_state.get("monthly_extract_limit")
-    if db_conn:
-        monthly_used = get_monthly_api_call_count(
-            db_conn, st.session_state["logged_in_user"]
-        )
-        if monthly_limit is None:
-            st.info(f"이번 달 사용량: {monthly_used} / 무제한")
+def render_sidebar(ctx: AppContext) -> None:
+    with st.sidebar:
+        st.write(f"👤 **{ctx.user_id}**님 환영합니다.")
+        if st.button("LogOut"):
+            st.session_state["logged_in_user"] = None
+            st.session_state["api_key"] = None
+            st.rerun()
+        st.divider()
+        st.header("Account State")
+        if ctx.api_key:
+            st.success("✅ 관리자 승인 완료")
         else:
-            st.info(f"이번 달 사용량: {monthly_used} / {monthly_limit}")
+            st.error("❌ API Key 연동 실패")
 
-# --- 탭 구성 ---
-tab_order, tab_catalog, tab_zipcode, tab_history, tab_search = st.tabs(
-    [
-        "📦 주문서 추출",
-        "📋 카탈로그 생성",
-        "📮 우편번호 추출",
-        "🗂️ 나의 추출 이력",
-        "🔎 채팅 검색",
-    ]
-)
-
-# ===== 탭 1: 주문서 추출 (기존 기능) =====
-with tab_order:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown(
-            '<span class="step-badge">1</span> **카탈로그 업로드**',
-            unsafe_allow_html=True,
-        )
-        catalog_file = st.file_uploader(
-            "카탈로그를 업로드하세요.",
-            type=["json"],
+        used = monthly_api_usage(ctx.user_id) if ctx.db_conn else 0
+        limit = st.session_state.get("monthly_extract_limit")
+        st.info(
+            f"이번 달 사용량: {used} / "
+            f"{'무제한' if limit is None else limit}"
         )
 
-    with col2:
-        st.markdown(
-            '<span class="step-badge">2</span> **대화 내역 업로드**',
-            unsafe_allow_html=True,
-        )
-        if "chat_uploader_key" not in st.session_state:
-            st.session_state["chat_uploader_key"] = 0
-        chat_files = st.file_uploader(
-            "카카오톡 대화 파일들을 업로드하세요.",
-            type=["csv"],
-            accept_multiple_files=True,
-            key=f"chat_uploader_{st.session_state['chat_uploader_key']}",
-        )
 
-        if chat_files:
-            name_groups = {}
-            for f in chat_files:
-                content = f.read()
-                f.seek(0)
-                name_groups.setdefault(f.name, [])
-                # 같은 이름+같은 내용이면 중복 제거
-                if not any(content == existing for existing, _ in name_groups[f.name]):
-                    name_groups[f.name].append((content, f))
-
-            unique_files = []
-            display_names = {}
-            for name, entries in name_groups.items():
-                if len(entries) == 1:
-                    unique_files.append(entries[0][1])
-                    display_names[id(entries[0][1])] = name
-                else:
-                    stem = Path(name).stem
-                    suffix = Path(name).suffix
-                    for idx, (_, f) in enumerate(entries, start=1):
-                        display_names[id(f)] = f"{stem}({idx}){suffix}"
-                        unique_files.append(f)
-            chat_files = unique_files
-            st.session_state["chat_display_names"] = display_names
-            with st.expander(f"📁 업로드된 파일 {len(chat_files)}개 보기"):
-                for f in chat_files:
-                    st.write(f"• {display_names.get(id(f), f.name)}")
-            if st.button("❌ 업로드 파일 전체 삭제", key="clear_chat_files"):
-                st.session_state["chat_uploader_key"] += 1
-                st.rerun()
-
+def main() -> None:
+    st.set_page_config(page_title="Chat2Order: Convert Chat to Order", layout="wide")
     st.markdown(
-        '<span class="step-badge">3</span> **라이브쇼핑 시간 입력**',
+        f"<style>{load_static_text('styles/main.css')}</style>",
         unsafe_allow_html=True,
     )
-    start_col1, start_col2, end_col1, end_col2 = st.columns(4)
-    with start_col1:
-        start_date = st.date_input("시작 날짜")
-    with start_col2:
-        start_time = st.time_input("시작 시간")
-    with end_col1:
-        end_date = st.date_input("종료 날짜", value=start_date)
-    with end_col2:
-        end_time = st.time_input("종료 시간", value=datetime.time(23, 59))
-    time_after = datetime.datetime.combine(start_date, start_time)
-    time_before = datetime.datetime.combine(end_date, end_time)
+    db_conn = get_db()
+    st.session_state.setdefault("logged_in_user", None)
+    st.session_state.setdefault("api_key", None)
+    st.session_state.setdefault("monthly_extract_limit", None)
 
-    if st.button("🚀 주문서 추출 실행", type="primary", width="stretch"):
-        if not st.session_state.get("api_key"):
-            st.warning("API Key가 할당되지 않았습니다. 관리자에게 문의하세요.")
-        elif not catalog_file:
-            st.warning("카탈로그 파일을 업로드해 주세요.")
-        elif not chat_files:
-            st.warning("대화 내역 파일을 1개 이상 업로드해 주세요.")
-        else:
-            monthly_limit = st.session_state.get("monthly_extract_limit")
-            files_to_process = chat_files
-            if db_conn and monthly_limit is not None:
-                monthly_used = get_monthly_api_call_count(
-                    db_conn, st.session_state["logged_in_user"]
-                )
-                remaining = monthly_limit - monthly_used
-                if remaining <= 0:
-                    st.error(
-                        f"이번 달 API 호출 한도({monthly_limit}회)를 모두 사용했습니다. "
-                        "다음 달 1일에 초기화됩니다."
-                    )
-                    st.stop()
-                elif len(chat_files) > remaining:
-                    st.warning(
-                        f"이번 달 남은 한도가 {remaining}회입니다. "
-                        f"파일 {len(chat_files)}개 중 {remaining}개만 처리합니다."
-                    )
-                    files_to_process = chat_files[:remaining]
+    if not st.session_state["logged_in_user"]:
+        render_login(db_conn)
+        st.stop()
 
-            with st.status("주문서 추출 중입니다", expanded=True) as status:
-                st.write("📋 카탈로그를 파싱 중")
-                catalog_data = parse_catalog_json(catalog_file)
-                all_extracted_orders = []
-                all_unresolved_rows = []
-                raw_files_buffer = []
-
-                job_id = None
-                if db_conn:
-                    job_id = create_extraction_job(
-                        conn=db_conn,
-                        user_id=st.session_state["logged_in_user"],
-                        title=datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
-                        live_start_time=time_after,
-                        model=config["gemini"]["model"],
-                    )
-
-                today_str = datetime.date.today().strftime("%Y%m%d")
-                seq = 1
-                total_files = len(files_to_process)
-                progress_text = st.empty()
-                progress_bar = st.progress(0)
-                display_names = st.session_state.get("chat_display_names", {})
-                for i, chat_file in enumerate(files_to_process):
-                    file_display = display_names.get(id(chat_file), chat_file.name)
-                    progress_text.write(f"💬 채팅 내역 분석 중 ({i}/{total_files})")
-                    chat_data, ts = parse_csv(
-                        chat_file,
-                        filename_prefix=config["csv"]["filename_prefix"],
-                        exclude_messages=config["csv"]["exclude_messages"],
-                        time_after=time_after,
-                        time_before=time_before,
-                    )
-
-                    # 원본 CSV를 키워드 검색용으로 보관 (탭 "채팅 검색")
-                    raw_files_buffer.append(
-                        {
-                            "filename": file_display,
-                            "chat_name": extract_chat_name(
-                                file_display,
-                                filename_prefix=config["csv"]["filename_prefix"],
-                            ),
-                            "content": chat_file.getvalue().decode(
-                                "utf-8-sig", errors="replace"
-                            ),
-                            "message_count": len(chat_data),
-                        }
-                    )
-
-                    try:
-                        extracted_data = extract_orders_from_chat(
-                            st.session_state["api_key"],
-                            catalog_data,
-                            chat_data,
-                            model=config["gemini"]["model"],
-                            temperature=config["gemini"]["temperature"],
-                            prompt_template=order_extraction_prompt,
-                        )
-                        if db_conn and job_id:
-                            save_extract_call_log(
-                                conn=db_conn,
-                                user_id=st.session_state["logged_in_user"],
-                                job_id=job_id,
-                                chat_filename=file_display,
-                            )
-                    except RuntimeError as e:
-                        st.error(str(e))
-                        extracted_data = None
-
-                    if extracted_data:
-                        if db_conn and job_id:
-                            save_training_record(
-                                conn=db_conn,
-                                job_id=job_id,
-                                user_id=st.session_state["logged_in_user"],
-                                chat_filename=file_display,
-                                catalog_data=catalog_data,
-                                chat_data=chat_data,
-                                predicted_json=extracted_data,
-                            )
-                        items = extracted_data.get("items", [])
-                        if items:
-                            chat_name = extract_chat_name(
-                                file_display,
-                                filename_prefix=config["csv"]["filename_prefix"],
-                            )
-                            order_number = f"{today_str}{seq:03d}"
-                            # LLM이 반환한 product/option은 힌트일 뿐이며, 최종 확정은
-                            # 항상 CatalogResolver를 통과시킨다 (issue #61).
-                            resolved_items = resolve_extracted_items(
-                                items, catalog_data
-                            )
-                            for resolved in resolved_items:
-                                if resolved.mapping_status == "unresolved":
-                                    all_unresolved_rows.append(
-                                        {
-                                            "chat_name": chat_name,
-                                            "raw_product": resolved.raw_product,
-                                            "raw_option": resolved.raw_option,
-                                            "volume": resolved.volume,
-                                            "candidate_products": resolved.candidate_products,
-                                            "mapping_reason": resolved.mapping_reason,
-                                            "order_name": extracted_data.get(
-                                                "order_name"
-                                            ),
-                                            "phone_number": extracted_data.get(
-                                                "phone_number"
-                                            ),
-                                            "address": extracted_data.get("address"),
-                                        }
-                                    )
-                                    continue
-                                row = {
-                                    "product": resolved.product,
-                                    "option": resolved.option,
-                                    "volume": resolved.volume,
-                                    "raw_product": resolved.raw_product,
-                                    "raw_option": resolved.raw_option,
-                                    "mapping_status": resolved.mapping_status,
-                                    "order_name": extracted_data.get("order_name"),
-                                    "phone_number": extracted_data.get("phone_number"),
-                                    "address": extracted_data.get("address"),
-                                    "search_address": extracted_data.get(
-                                        "search_address"
-                                    ),
-                                    "time": ts,
-                                    "chat_name": chat_name,
-                                    "live_time": time_after,
-                                    "order_number": order_number,
-                                }
-                                all_extracted_orders.append(row)
-                            seq += 1
-
-                    progress_bar.progress((i + 1) / total_files)
-                    progress_text.write(f"💬 채팅 내역 분석 중 ({i + 1}/{total_files})")
-
-                if db_conn and job_id and raw_files_buffer:
-                    save_raw_chat_files(
-                        conn=db_conn,
-                        job_id=job_id,
-                        user_id=st.session_state["logged_in_user"],
-                        files=raw_files_buffer,
-                    )
-
-                if db_conn and job_id and all_unresolved_rows:
-                    save_unresolved_items(
-                        conn=db_conn,
-                        job_id=job_id,
-                        items=all_unresolved_rows,
-                    )
-
-                if juso_api_key:
-                    st.write("📮 우편번호 조회 중")
-
-                status.update(
-                    label="🎉 주문 데이터 추출이 완료되었습니다!", state="complete"
-                )
-
-            unresolved_df = pd.DataFrame(all_unresolved_rows, dtype=object)
-            if not unresolved_df.empty and "candidate_products" in unresolved_df.columns:
-                # openpyxl은 list 셀 값을 쓸 수 없으므로 표시/저장 전 문자열로 변환
-                unresolved_df["candidate_products"] = unresolved_df[
-                    "candidate_products"
-                ].apply(lambda v: ", ".join(v) if isinstance(v, list) else (v or ""))
-
-            if all_extracted_orders:
-                df = pd.DataFrame(all_extracted_orders, dtype=object)
-                df["phone_number"] = df["phone_number"].apply(format_phone_number)
-                if "zip_code" in df.columns:
-                    df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
-
-                if juso_api_key:
-                    df["zip_code"] = df["search_address"].apply(
-                        lambda addr: lookup_zip_code(addr, juso_api_key)
-                    )
-                    df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
-
-                if db_conn and job_id:
-                    save_extracted_orders(
-                        conn=db_conn,
-                        job_id=job_id,
-                        orders=df.to_dict("records"),
-                    )
-                    update_extraction_job_total(
-                        conn=db_conn,
-                        job_id=job_id,
-                        total_orders=len(df),
-                    )
-
-                col_map = config["output_columns"]
-                rename = {v: k for k, v in col_map.items() if v}
-
-                # 화면 표시용: 매핑 상태(확정/자동보정)와 원문 대조 컬럼을 추가한 사본.
-                # 발주용 Excel 본시트 양식(9컬럼 고정)에는 영향을 주지 않는다.
-                display_df = df.copy()
-                display_df["매핑"] = (
-                    display_df["mapping_status"]
-                    .map(MAPPING_STATUS_LABELS)
-                    .fillna("✅ 확정")
-                )
-                display_df["원문"] = display_df.apply(
-                    lambda r: (
-                        f"{r.get('raw_product') or ''} {r.get('raw_option') or ''}".strip()
-                        if r.get("mapping_status") in ("typo", "inferred")
-                        else ""
-                    ),
-                    axis=1,
-                )
-                display_df = display_df.rename(columns=rename)
-                display_df = display_df.reindex(
-                    columns=list(col_map.keys()) + ["매핑", "원문"], fill_value=""
-                )
-                st.dataframe(display_df, width="stretch")
-
-                # 저장/다운로드용: 기존 발주 양식 그대로 유지.
-                df = df.rename(columns=rename)
-                df = df.reindex(columns=list(col_map.keys()), fill_value="")
-
-                output = io.BytesIO()
-                with pd.ExcelWriter(
-                    output, engine="openpyxl", datetime_format="YYYY-MM-DD HH:MM:SS"
-                ) as writer:
-                    df.to_excel(
-                        writer, index=False, sheet_name=config["output"]["sheet_name"]
-                    )
-                    worksheet = writer.sheets[config["output"]["sheet_name"]]
-                    if "우편번호" in df.columns:
-                        zip_col_idx = df.columns.get_loc("우편번호") + 1
-                        for row in worksheet.iter_rows(
-                            min_row=2,
-                            max_row=worksheet.max_row,
-                            min_col=zip_col_idx,
-                            max_col=zip_col_idx,
-                        ):
-                            row[0].number_format = "@"
-
-                    if not unresolved_df.empty:
-                        unresolved_df.to_excel(
-                            writer, index=False, sheet_name="검토필요"
-                        )
-
-                st.download_button(
-                    label="📥 엑셀 파일(.xlsx) 다운로드",
-                    data=output.getvalue(),
-                    file_name=config["output"]["file_name"],
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                )
-            elif unresolved_df.empty:
-                st.error(
-                    "추출된 데이터가 없습니다. 원본 데이터나 API 상태를 확인해 주세요."
-                )
-
-            if not unresolved_df.empty:
-                st.warning(
-                    f"⚠️ {len(unresolved_df)}건은 자동 매핑에 실패하여 검토가 필요합니다. "
-                    "임의로 확정하지 않았으니 아래 내역을 확인해 주세요."
-                )
-                st.dataframe(
-                    unresolved_df[
-                        [
-                            "chat_name",
-                            "raw_product",
-                            "raw_option",
-                            "volume",
-                            "candidate_products",
-                            "mapping_reason",
-                        ]
-                    ],
-                    width="stretch",
-                )
-
-# ===== 탭 2: 카탈로그 생성 =====
-with tab_catalog:
-    st.markdown(
-        '<span class="step-badge">1</span> **재고 CSV 업로드**', unsafe_allow_html=True
+    config = load_config()
+    ctx = AppContext(
+        db_conn=db_conn,
+        config=config,
+        api_key=st.session_state.get("api_key") or "",
+        user_id=st.session_state["logged_in_user"],
+        juso_api_key=get_env("JUSO_API_KEY"),
+        order_extraction_prompt=cached_prompt(config["prompts"]["order_extraction"]),
+        address_to_search_prompt=cached_prompt(config["prompts"]["address_to_search"]),
     )
-    stk_csv_file = st.file_uploader(
-        "CSV 파일을 업로드하세요. (상품명·옵션내용 컬럼 필요)",
-        type=["csv"],
-        key="catalog_csv_uploader",
-    )
-
-    if stk_csv_file:
-        try:
-            catalog_dict = generate_catalog_from_csv(stk_csv_file)
-        except ValueError as e:
-            st.error(str(e))
-            st.stop()
-
-        st.markdown(
-            '<span class="step-badge">2</span> **미리보기 및 확인**',
-            unsafe_allow_html=True,
-        )
-
-        total_products = len(catalog_dict)
-        total_options = sum(len(opts) for opts in catalog_dict.values())
-        single_products = sum(
-            1 for opts in catalog_dict.values() if opts == ["단일상품"]
-        )
-
-        stat_cols = st.columns(3)
-        with stat_cols[0]:
-            st.metric("총 상품 수", total_products)
-        with stat_cols[1]:
-            st.metric("총 옵션 수", total_options)
-        with stat_cols[2]:
-            st.metric("단일상품", single_products)
-
-        preview_rows = []
-        for product, options in catalog_dict.items():
-            preview_rows.append(
-                {
-                    "상품명": product,
-                    "옵션": ", ".join(options),
-                    "옵션 수": len(options),
-                }
-            )
-        preview_df = pd.DataFrame(preview_rows, dtype=object)
-        preview_df.index = preview_df.index + 1
-        preview_df.index.name = "#"
-        st.dataframe(preview_df, width="stretch")
-
-        st.markdown(
-            '<span class="step-badge">3</span> **카탈로그 다운로드**',
-            unsafe_allow_html=True,
-        )
-
-        catalog_json_str = json.dumps(catalog_dict, ensure_ascii=False, indent=2)
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-
-        st.download_button(
-            label="📥 catalog.json 다운로드",
-            data=catalog_json_str.encode("utf-8"),
-            file_name=f"catalog_{timestamp}.json",
-            mime="application/json",
-            type="primary",
-            width="stretch",
-        )
-
-# ===== 탭 3: 우편번호 추출 =====
-with tab_zipcode:
+    render_sidebar(ctx)
     st.markdown(
-        '<span class="step-badge">1</span> **엑셀 파일 업로드**',
+        "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat"
+        "<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",
         unsafe_allow_html=True,
     )
-    zip_excel_file = st.file_uploader(
-        "주소 컬럼이 포함된 엑셀 파일을 업로드하세요.",
-        type=["xlsx", "xls"],
-        key="zip_excel_uploader",
+    st.markdown(
+        "사장님은 소통에만 집중하세요. 대화 속 주문 정리는 C2O가 알아서 엑셀로 만들어 드립니다."
     )
 
-    if zip_excel_file:
-        zip_df = pd.read_excel(zip_excel_file)
-        if "주소" not in zip_df.columns:
-            st.error(
-                f"'주소' 컬럼을 찾을 수 없습니다. 발견된 컬럼: {list(zip_df.columns)}"
-            )
-        else:
-            st.markdown(
-                '<span class="step-badge">2</span> **미리보기**',
-                unsafe_allow_html=True,
-            )
-            has_zip_col = "우편번호" in zip_df.columns
-            if has_zip_col:
-                st.info(
-                    "파일에 이미 '우편번호' 컬럼이 있습니다. 조회 결과로 덮어씁니다."
-                )
-            st.dataframe(zip_df.head(10), width="stretch")
-            st.caption(f"총 {len(zip_df)}건")
+    tabs = st.tabs(
+        [
+            "📦 주문서 추출",
+            "📋 카탈로그 생성",
+            "📮 우편번호 추출",
+            "🗂️ 나의 추출 이력",
+            "🔎 채팅 검색",
+        ]
+    )
+    renderers = (
+        tab_order.render,
+        tab_catalog.render,
+        tab_zipcode.render,
+        tab_history.render,
+        tab_search.render,
+    )
+    for tab, renderer in zip(tabs, renderers):
+        with tab:
+            renderer(ctx)
 
-            if st.button(
-                "📮 우편번호 조회 실행",
-                type="primary",
-                width="stretch",
-                key="zip_lookup_btn",
-            ):
-                if not st.session_state.get("api_key"):
-                    st.warning("API Key가 할당되지 않았습니다. 관리자에게 문의하세요.")
-                elif not juso_api_key:
-                    st.warning("도로명주소 API 키가 설정되지 않았습니다.")
-                else:
-                    with st.status("우편번호 조회 중입니다", expanded=True) as zstatus:
-                        progress_text = st.empty()
-                        progress_bar = st.progress(0)
-                        total = len(zip_df)
 
-                        def _progress(idx, total_count):
-                            pct = min((idx + 1) / total_count, 1.0)
-                            progress_bar.progress(pct)
-                            progress_text.write(
-                                f"📮 우편번호 조회 중... ({idx + 1}/{total_count})"
-                            )
-
-                        result_series = batch_lookup_zip_codes(
-                            df=zip_df,
-                            address_col="주소",
-                            juso_api_key=juso_api_key,
-                            api_key=st.session_state["api_key"],
-                            model=config["gemini"]["model"],
-                            temperature=config["gemini"]["temperature"],
-                            prompt_template=address_to_search_prompt,
-                            progress_callback=_progress,
-                        )
-                        if has_zip_col:
-                            zip_df["우편번호"] = result_series
-                        else:
-                            addr_pos = zip_df.columns.get_loc("주소")
-                            zip_df.insert(addr_pos + 1, "우편번호", result_series)
-
-                        found = (zip_df["우편번호"] != "").sum()
-                        zstatus.update(
-                            label=f"🎉 우편번호 조회 완료! ({found}/{total}건 성공)",
-                            state="complete",
-                        )
-
-                    st.markdown(
-                        '<span class="step-badge">3</span> **결과 확인 및 다운로드**',
-                        unsafe_allow_html=True,
-                    )
-
-                    found = (zip_df["우편번호"] != "").sum()
-                    missed = total - found
-                    stat_cols = st.columns(3)
-                    with stat_cols[0]:
-                        st.metric("전체", total)
-                    with stat_cols[1]:
-                        st.metric("성공", found)
-                    with stat_cols[2]:
-                        st.metric("미조회", missed)
-
-                    st.dataframe(zip_df, width="stretch")
-
-                    zip_output = io.BytesIO()
-                    with pd.ExcelWriter(zip_output, engine="openpyxl") as zwriter:
-                        zip_df.to_excel(zwriter, index=False, sheet_name="Sheet1")
-                        zws = zwriter.sheets["Sheet1"]
-                        if "우편번호" in zip_df.columns:
-                            zcol = zip_df.columns.get_loc("우편번호") + 1
-                            for row in zws.iter_rows(
-                                min_row=2,
-                                max_row=zws.max_row,
-                                min_col=zcol,
-                                max_col=zcol,
-                            ):
-                                row[0].number_format = "@"
-
-                    original_name = Path(zip_excel_file.name).stem
-                    st.download_button(
-                        label="📥 엑셀 파일(.xlsx) 다운로드",
-                        data=zip_output.getvalue(),
-                        file_name=f"{original_name}_우편번호.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        key="zip_download_btn",
-                    )
-
-# ===== 탭 4: 추출 이력 =====
-with tab_history:
-    if not db_conn:
-        st.warning("DB 연결이 설정되지 않아 이력을 불러올 수 없습니다.")
-    else:
-        jobs = get_jobs_by_user(
-            conn=db_conn,
-            user_id=st.session_state["logged_in_user"],
-        )
-
-        if not jobs:
-            st.info("저장된 추출 이력이 없습니다.")
-        else:
-            job_labels = []
-            for j in jobs:
-                live_str = (
-                    j["live_start_time"][:16].replace("T", " ")
-                    if j.get("live_start_time")
-                    else "-"
-                )
-                job_labels.append(
-                    f"{j['title']}  |  라이브: {live_str}  |  {j['total_orders']}건"
-                )
-
-            selected_idx = st.radio(
-                "다운로드할 이력을 선택하세요 (최근 5건)",
-                options=range(len(jobs)),
-                format_func=lambda i: job_labels[i],
-            )
-
-            selected_job = jobs[selected_idx]
-            orders = get_orders_by_job(conn=db_conn, job_id=selected_job["id"])
-
-            if not orders:
-                st.info("해당 이력에 저장된 주문 데이터가 없습니다.")
-            else:
-                hist_df = pd.DataFrame(orders, dtype=object)
-                hist_df = hist_df.drop(
-                    columns=[
-                        c
-                        for c in ["id", "job_id", "created_at"]
-                        if c in hist_df.columns
-                    ]
-                )
-
-                col_map = config["output_columns"]
-                rename = {v: k for k, v in col_map.items() if v}
-                hist_df = hist_df.rename(columns=rename)
-                hist_df = hist_df.reindex(columns=list(col_map.keys()), fill_value="")
-
-                if "우편번호" in hist_df.columns:
-                    hist_df["우편번호"] = hist_df["우편번호"].apply(normalize_zip_code)
-
-                st.dataframe(hist_df.head(20), width="stretch")
-                st.caption(f"총 {len(hist_df)}건 (최대 20건 미리보기)")
-
-                hist_output = io.BytesIO()
-                with pd.ExcelWriter(
-                    hist_output,
-                    engine="openpyxl",
-                    datetime_format="YYYY-MM-DD HH:MM:SS",
-                ) as writer:
-                    hist_df.to_excel(
-                        writer, index=False, sheet_name=config["output"]["sheet_name"]
-                    )
-                    worksheet = writer.sheets[config["output"]["sheet_name"]]
-                    if "우편번호" in hist_df.columns:
-                        zip_col_idx = hist_df.columns.tolist().index("우편번호") + 1
-                        for row in worksheet.iter_rows(
-                            min_row=2,
-                            max_row=worksheet.max_row,
-                            min_col=zip_col_idx,
-                            max_col=zip_col_idx,
-                        ):
-                            row[0].number_format = "@"
-
-                col_dl1, col_dl2 = st.columns(2)
-
-                with col_dl1:
-                    st.download_button(
-                        label="📥 엑셀 파일(.xlsx) 다운로드",
-                        data=hist_output.getvalue(),
-                        file_name=f"{selected_job['title']}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        type="primary",
-                        key="hist_download_btn",
-                        width="stretch",
-                    )
-
-                with col_dl2:
-                    catalog_json_str = get_catalog_by_job(
-                        conn=db_conn, job_id=selected_job["id"]
-                    )
-                    if catalog_json_str:
-                        # DB에는 [{"상품명": ..., "옵션": [...]}] list 형식으로 저장되어 있으므로
-                        # 실제 사용 형식인 {"상품명": [옵션...]} dict으로 역변환
-                        catalog_list = json.loads(catalog_json_str)
-                        catalog_dict = {
-                            item["상품명"]: item["옵션"] for item in catalog_list
-                        }
-                        formatted = json.dumps(
-                            catalog_dict,
-                            ensure_ascii=False,
-                            indent=2,
-                        )
-                        st.download_button(
-                            label="📋 카탈로그(.json) 다운로드",
-                            data=formatted.encode("utf-8"),
-                            file_name=f"catalog_{selected_job['title']}.json",
-                            mime="application/json",
-                            type="secondary",
-                            key="hist_catalog_btn",
-                            width="stretch",
-                        )
-                    else:
-                        st.button(
-                            "📋 카탈로그 정보 없음",
-                            disabled=True,
-                            key="hist_catalog_btn_disabled",
-                            width="stretch",
-                        )
-
-# ===== 탭 5: 채팅 검색 =====
-with tab_search:
-    if not db_conn:
-        st.warning("DB 연결이 설정되지 않아 검색할 수 없습니다.")
-    else:
-        jobs = get_jobs_by_user(
-            conn=db_conn,
-            user_id=st.session_state["logged_in_user"],
-        )
-
-        if not jobs:
-            st.info("저장된 추출 이력이 없습니다. 먼저 주문서 추출을 실행해 주세요.")
-        else:
-            job_labels = []
-            for j in jobs:
-                live_str = (
-                    j["live_start_time"][:16].replace("T", " ")
-                    if j.get("live_start_time")
-                    else "-"
-                )
-                job_labels.append(
-                    f"{j['title']}  |  라이브: {live_str}  |  {j['total_orders']}건"
-                )
-
-            search_idx = st.radio(
-                "검색할 추출 작업을 선택하세요 (최근 5건)",
-                options=range(len(jobs)),
-                format_func=lambda i: job_labels[i],
-                key="search_job_radio",
-            )
-            selected_job = jobs[search_idx]
-
-            keyword = st.text_input(
-                "검색 키워드 (대화 내용에서 정확히 포함된 파일을 찾습니다)",
-                key="search_keyword_input",
-                placeholder="예: 블랙, 환불, 입금",
-                on_change=lambda: st.session_state.update({"search_trigger": True}),
-            )
-
-            search_triggered = st.session_state.pop("search_trigger", False)
-            if st.button("🔍 검색", type="primary", key="search_run_btn") or search_triggered:
-                if not keyword.strip():
-                    st.warning("검색 키워드를 입력해 주세요.")
-                else:
-                    raw_files = get_raw_files_by_job(
-                        conn=db_conn, job_id=selected_job["id"]
-                    )
-                    if not raw_files:
-                        st.session_state["search_results"] = None
-                        st.info(
-                            "이 작업은 원본 대화가 저장되지 않았습니다. "
-                            "(채팅 검색 기능 적용 이전에 추출되었거나 DB 미연결 상태로 추출된 작업입니다.)"
-                        )
-                    else:
-                        live_date = None
-                        if selected_job.get("live_start_time"):
-                            live_date = selected_job["live_start_time"][:10]
-                        results = []
-                        for f in raw_files:
-                            matches = search_keyword_in_raw_csv(
-                                f.get("content", ""), keyword, live_date=live_date
-                            )
-                            if matches:
-                                results.append(
-                                    {
-                                        "id": f["id"],
-                                        "chat_name": f.get("chat_name") or "-",
-                                        "filename": f.get("filename"),
-                                        "content": f.get("content", ""),
-                                    }
-                                )
-                        st.session_state["search_results"] = {
-                            "keyword": keyword,
-                            "job_id": selected_job["id"],
-                            "items": results,
-                            "total": len(raw_files),
-                        }
-
-            # download_button 클릭으로 rerun돼도 결과가 유지되도록 session_state 사용
-            sr = st.session_state.get("search_results")
-            if sr and sr.get("job_id") == selected_job["id"]:
-                items = sr["items"]
-                st.caption(
-                    f"'{sr['keyword']}' 검색 결과: {len(items)}개 파일 매칭 "
-                    f"(전체 {sr['total']}개 중)"
-                )
-                if not items:
-                    st.info("매칭되는 파일이 없습니다.")
-                else:
-                    page_size = 20
-                    total_pages = max(1, (len(items) + page_size - 1) // page_size)
-                    if "search_page" not in st.session_state:
-                        st.session_state["search_page"] = 0
-                    # 새 검색 시 페이지 초기화
-                    if st.session_state.get("search_results_keyword") != sr["keyword"]:
-                        st.session_state["search_page"] = 0
-                        st.session_state["search_results_keyword"] = sr["keyword"]
-                    page = st.session_state["search_page"]
-
-                    start = page * page_size
-                    end = start + page_size
-                    page_items = items[start:end]
-
-                    header = st.columns([6, 1])
-                    header[0].markdown("**채팅명**")
-                    header[1].markdown("**다운로드**")
-                    for r in page_items:
-                        c1, c2 = st.columns([6, 1])
-                        c1.write(r["filename"])
-                        c2.download_button(
-                            label="📥",
-                            data=r["content"].encode("utf-8-sig"),
-                            file_name=r["filename"],
-                            mime="text/csv",
-                            key=f"search_dl_{r['id']}",
-                        )
-
-                    if total_pages > 1:
-                        st.caption(f"{page + 1} / {total_pages} 페이지")
-                        nav_cols = st.columns([1, 1, 8])
-                        if nav_cols[0].button("◀ 이전", key="search_prev", disabled=(page == 0)):
-                            st.session_state["search_page"] -= 1
-                            st.rerun()
-                        if nav_cols[1].button("다음 ▶", key="search_next", disabled=(page >= total_pages - 1)):
-                            st.session_state["search_page"] += 1
-                            st.rerun()
+if __name__ == "__main__":
+    main()

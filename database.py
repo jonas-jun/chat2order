@@ -5,6 +5,27 @@ from datetime import datetime
 from supabase import create_client, Client
 
 
+def _clean(value):
+    """pandas NaN을 JSON 직렬화 가능한 None으로 변환한다."""
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
+
+
+def _rows_from(
+    items: list[dict], keys: tuple[str, ...], job_id: str
+) -> list[dict]:
+    created_at = datetime.now().isoformat()
+    return [
+        {
+            "job_id": job_id,
+            **{key: _clean(item.get(key)) for key in keys},
+            "created_at": created_at,
+        }
+        for item in items
+    ]
+
+
 def get_connection(url: str, key: str) -> Client:
     """Supabase 클라이언트를 생성하여 반환합니다."""
     return create_client(url, key)
@@ -60,32 +81,15 @@ def save_extracted_orders(
     확정한 건(exact/alias/typo/inferred)만 이 함수로 저장해야 합니다.
     unresolved 건은 save_unresolved_items()로 별도 저장합니다.
     """
-    def clean(value):
-        """pandas가 결측치를 float NaN으로 채운 경우 JSON 직렬화가 가능하도록 None으로 변환합니다."""
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        return value
-
-    rows = [
-        {
-            "job_id": job_id,
-            "order_number": clean(o.get("order_number")),
-            "product": clean(o.get("product")),
-            "option": clean(o.get("option")),
-            "volume": clean(o.get("volume")),
-            "chat_name": clean(o.get("chat_name")),
-            "order_name": clean(o.get("order_name")),
-            "phone_number": clean(o.get("phone_number")),
-            "address": clean(o.get("address")),
-            "search_address": clean(o.get("search_address")),
-            "zip_code": clean(o.get("zip_code")),
-            "raw_product": clean(o.get("raw_product")),
-            "raw_option": clean(o.get("raw_option")),
-            "mapping_status": clean(o.get("mapping_status")),
-            "created_at": datetime.now().isoformat(),
-        }
-        for o in orders
-    ]
+    rows = _rows_from(
+        orders,
+        (
+            "order_number", "product", "option", "volume", "chat_name",
+            "order_name", "phone_number", "address", "search_address",
+            "zip_code", "raw_product", "raw_option", "mapping_status",
+        ),
+        job_id,
+    )
     conn.table("extracted_orders").insert(rows).execute()
 
 
@@ -103,27 +107,17 @@ def save_unresolved_items(
     if not items:
         return
 
-    def clean(value):
-        if isinstance(value, float) and math.isnan(value):
-            return None
-        return value
-
-    rows = [
-        {
-            "job_id": job_id,
-            "chat_name": clean(i.get("chat_name")),
-            "raw_product": clean(i.get("raw_product")),
-            "raw_option": clean(i.get("raw_option")),
-            "volume": clean(i.get("volume")),
-            "candidate_products": i.get("candidate_products") or [],
-            "mapping_reason": clean(i.get("mapping_reason")),
-            "order_name": clean(i.get("order_name")),
-            "phone_number": clean(i.get("phone_number")),
-            "address": clean(i.get("address")),
-            "created_at": datetime.now().isoformat(),
-        }
-        for i in items
-    ]
+    rows = _rows_from(
+        items,
+        (
+            "chat_name", "raw_product", "raw_option", "volume",
+            "candidate_products", "mapping_reason", "order_name",
+            "phone_number", "address",
+        ),
+        job_id,
+    )
+    for row in rows:
+        row["candidate_products"] = row.get("candidate_products") or []
     conn.table("unresolved_items").insert(rows).execute()
 
 
@@ -132,11 +126,15 @@ def save_training_record(
     job_id: str,
     user_id: str,
     chat_filename: str,
-    catalog_data: list,
+    catalog_data: dict[str, list[str]],
     chat_data: list,
     predicted_json: list | dict,
 ) -> str:
     """학습 데이터 레코드를 Supabase에 저장하고 id를 반환합니다."""
+    catalog_for_training = [
+        {"상품명": product, "옵션": options}
+        for product, options in catalog_data.items()
+    ]
     result = (
         conn.table("training_data")
         .insert(
@@ -144,7 +142,7 @@ def save_training_record(
                 "job_id": job_id,
                 "user_id": user_id,
                 "chat_filename": chat_filename,
-                "catalog_json": json.dumps(catalog_data, ensure_ascii=False),
+                "catalog_json": json.dumps(catalog_for_training, ensure_ascii=False),
                 "chat_json": json.dumps(chat_data, ensure_ascii=False),
                 "predicted_json": json.dumps(predicted_json, ensure_ascii=False),
                 "is_verified": False,
