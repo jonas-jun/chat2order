@@ -2,6 +2,7 @@ import re
 import ast
 import json
 import io
+import logging
 import unicodedata
 import requests
 from dataclasses import dataclass, field
@@ -15,6 +16,8 @@ from google.genai import types
 from models import OrderExtractionResult, ResolvedProductItem
 from resolver import CatalogIndex, resolve_catalog_item
 
+
+logger = logging.getLogger(__name__)
 
 Catalog = dict[str, list[str]]
 
@@ -160,7 +163,7 @@ def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
         if juso_list:
             return juso_list[0].get("zipNo")
     except Exception:
-        pass
+        logger.warning("우편번호 조회 실패 (address=%r)", address, exc_info=True)
     return None
 
 
@@ -402,7 +405,7 @@ def parse_csv(
         try:
             timestamp = pd.to_datetime(df.iloc[-1]["DATE"]).to_pydatetime()
         except Exception:
-            pass
+            logger.warning("마지막 메시지 시각 파싱 실패", exc_info=True)
 
     if (time_after or time_before) and "DATE" in df.columns:
         df["DATE"] = pd.to_datetime(df["DATE"])

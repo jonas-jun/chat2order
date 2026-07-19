@@ -111,8 +111,6 @@ def main():
     df = pd.DataFrame(all_extracted_orders, dtype=object)
     if "phone_number" in df:
         df["phone_number"] = df["phone_number"].apply(format_phone_number)
-    if "zip_code" in df.columns:
-        df["zip_code"] = df["zip_code"].apply(normalize_zip_code)
 
     juso_api_key = get_env("JUSO_API_KEY")
     if juso_api_key and "search_address" in df:
