@@ -194,6 +194,27 @@ def authenticate_user(conn: Client, user_id: str, password: str) -> dict | None:
     return None
 
 
+def get_account_by_user_id(conn: Client, user_id: str) -> dict | None:
+    """user_id로 활성 계정 정보를 조회합니다(비밀번호 검증 없이 세션 복원용).
+    서명 토큰으로 인증을 이미 확인한 뒤에만 호출해야 합니다.
+    반환 키: gemini_api_key, monthly_extract_limit (None이면 무제한).
+    부재하거나 비활성 계정이면 None을 반환합니다.
+    """
+    response = (
+        conn.table("accounts")
+        .select("gemini_api_key, is_active, monthly_extract_limit")
+        .eq("user_id", user_id)
+        .execute()
+    )
+    if response.data and response.data[0].get("is_active"):
+        row = response.data[0]
+        return {
+            "gemini_api_key": row["gemini_api_key"],
+            "monthly_extract_limit": row.get("monthly_extract_limit"),
+        }
+    return None
+
+
 def save_extract_call_log(
     conn: Client,
     user_id: str,

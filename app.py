@@ -1,9 +1,17 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import extra_streamlit_components as stx
 import streamlit as st
 import yaml
 
-from database import authenticate_user, get_connection, get_monthly_api_call_count
+from auth import COOKIE_NAME, DEFAULT_TTL_SECONDS, issue_token, verify_token
+from database import (
+    authenticate_user,
+    get_account_by_user_id,
+    get_connection,
+    get_monthly_api_call_count,
+)
 from settings import get_env, load_prompt
 from ui import tab_catalog, tab_history, tab_order, tab_search, tab_zipcode
 from ui.common import AppContext
@@ -37,7 +45,45 @@ def monthly_api_usage(user_id: str) -> int:
     return get_monthly_api_call_count(connection, user_id) if connection else 0
 
 
-def render_login(db_conn) -> None:
+def _persist_login_cookie(cookie_manager, user_id: str) -> None:
+    """로그인 성공 시 서명 토큰을 쿠키에 저장한다. AUTH_SECRET 미설정 시 생략."""
+    secret = get_env("AUTH_SECRET")
+    if not secret:
+        return
+    token = issue_token(user_id, secret)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=DEFAULT_TTL_SECONDS)
+    cookie_manager.set(COOKIE_NAME, token, expires_at=expires_at)
+
+
+def _clear_login_cookie(cookie_manager) -> None:
+    """로그아웃 시 인증 쿠키를 제거한다."""
+    try:
+        cookie_manager.delete(COOKIE_NAME)
+    except KeyError:
+        pass
+
+
+def _restore_login_from_cookie(cookie_manager, db_conn) -> None:
+    """세션이 비어 있을 때 쿠키의 서명 토큰으로 로그인 상태를 복원한다.
+
+    웹소켓 재연결 등으로 session_state가 초기화돼도 로그인 화면으로 튕기지 않도록
+    한다. 토큰 서명·만료를 검증한 뒤 DB에서 현재 계정 상태를 다시 읽어온다.
+    """
+    secret = get_env("AUTH_SECRET")
+    if not secret or not db_conn:
+        return
+    user_id = verify_token(cookie_manager.get(COOKIE_NAME), secret)
+    if not user_id:
+        return
+    account = get_account_by_user_id(db_conn, user_id)
+    if not account:
+        return
+    st.session_state["api_key"] = account["gemini_api_key"]
+    st.session_state["monthly_extract_limit"] = account["monthly_extract_limit"]
+    st.session_state["logged_in_user"] = user_id
+
+
+def render_login(db_conn, cookie_manager) -> None:
     _, center, _ = st.columns([1, 2, 1])
     with center:
         st.markdown(
@@ -67,15 +113,17 @@ def render_login(db_conn) -> None:
         st.session_state["api_key"] = account["gemini_api_key"]
         st.session_state["monthly_extract_limit"] = account["monthly_extract_limit"]
         st.session_state["logged_in_user"] = email
+        _persist_login_cookie(cookie_manager, email)
         st.rerun()
 
 
-def render_sidebar(ctx: AppContext) -> None:
+def render_sidebar(ctx: AppContext, cookie_manager) -> None:
     with st.sidebar:
         st.write(f"👤 **{ctx.user_id}**님 환영합니다.")
         if st.button("LogOut"):
             st.session_state["logged_in_user"] = None
             st.session_state["api_key"] = None
+            _clear_login_cookie(cookie_manager)
             st.rerun()
         st.divider()
         st.header("Account State")
@@ -98,13 +146,17 @@ def main() -> None:
         f"<style>{load_static_text('styles/main.css')}</style>",
         unsafe_allow_html=True,
     )
+    cookie_manager = stx.CookieManager()
     db_conn = get_db()
     st.session_state.setdefault("logged_in_user", None)
     st.session_state.setdefault("api_key", None)
     st.session_state.setdefault("monthly_extract_limit", None)
 
     if not st.session_state["logged_in_user"]:
-        render_login(db_conn)
+        _restore_login_from_cookie(cookie_manager, db_conn)
+
+    if not st.session_state["logged_in_user"]:
+        render_login(db_conn, cookie_manager)
         st.stop()
 
     config = load_config()
@@ -117,7 +169,7 @@ def main() -> None:
         order_extraction_prompt=cached_prompt(config["prompts"]["order_extraction"]),
         address_to_search_prompt=cached_prompt(config["prompts"]["address_to_search"]),
     )
-    render_sidebar(ctx)
+    render_sidebar(ctx, cookie_manager)
     st.markdown(
         "## 📦 <span style='color:#FF6B35;font-weight:bold;'>C</span>hat"
         "<span style='color:#FF6B35;font-weight:bold;'>2O</span>rder",

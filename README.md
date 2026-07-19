@@ -56,6 +56,7 @@ python -m streamlit run app.py
 export SUPABASE_URL="<SUPABASE_URL>"
 export SUPABASE_KEY="<SUPABASE_KEY>"
 export JUSO_API_KEY="<JUSO_API_KEY>"
+export AUTH_SECRET="<AUTH_SECRET>"
 python -m streamlit run app.py
 ```
 
@@ -68,6 +69,11 @@ Railway의 Streamlit 서비스에서 **Variables** 탭에 다음 변수를 등�
 | `SUPABASE_URL` | Supabase 프로젝트 URL | 웹 로그인 사용 시 필수 |
 | `SUPABASE_KEY` | Supabase API Key | 웹 로그인 사용 시 필수 |
 | `JUSO_API_KEY` | 행정안전부 도로명주소 API Key | 우편번호 조회 시 필수 |
+| `AUTH_SECRET` | 로그인 쿠키 서명용 비밀키 | 로그인 유지(권장) |
+
+> `AUTH_SECRET`은 로그인 상태를 서명 쿠키로 영속화해, 추출 도중 웹소켓이 재연결돼도
+> 로그인 화면으로 튕기지 않게 합니다. 미설정 시 로그인은 세션에만 유지됩니다.
+> `python -c "import secrets; print(secrets.token_urlsafe(32))"` 로 긴 무작위 값을 생성하세요.
 
 `.env.example`은 필요한 변수 이름을 보여주는 템플릿이며 실제 비밀값을 저장하거나 Git에 커밋하지 않습니다.
 
