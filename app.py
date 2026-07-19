@@ -12,6 +12,7 @@ from database import (
     get_connection,
     get_monthly_api_call_count,
 )
+from session_keys import API_KEY, LOGGED_IN_USER, MONTHLY_EXTRACT_LIMIT
 from settings import get_env, load_prompt
 from ui import tab_catalog, tab_history, tab_order, tab_search, tab_zipcode
 from ui.common import AppContext
@@ -78,9 +79,9 @@ def _restore_login_from_cookie(cookie_manager, db_conn) -> None:
     account = get_account_by_user_id(db_conn, user_id)
     if not account:
         return
-    st.session_state["api_key"] = account["gemini_api_key"]
-    st.session_state["monthly_extract_limit"] = account["monthly_extract_limit"]
-    st.session_state["logged_in_user"] = user_id
+    st.session_state[API_KEY] = account["gemini_api_key"]
+    st.session_state[MONTHLY_EXTRACT_LIMIT] = account["monthly_extract_limit"]
+    st.session_state[LOGGED_IN_USER] = user_id
 
 
 def render_login(db_conn, cookie_manager) -> None:
@@ -110,9 +111,9 @@ def render_login(db_conn, cookie_manager) -> None:
         if not account:
             st.error("이메일/비밀번호가 올바르지 않거나 비활성화된 계정입니다.")
             return
-        st.session_state["api_key"] = account["gemini_api_key"]
-        st.session_state["monthly_extract_limit"] = account["monthly_extract_limit"]
-        st.session_state["logged_in_user"] = email
+        st.session_state[API_KEY] = account["gemini_api_key"]
+        st.session_state[MONTHLY_EXTRACT_LIMIT] = account["monthly_extract_limit"]
+        st.session_state[LOGGED_IN_USER] = email
         _persist_login_cookie(cookie_manager, email)
         st.rerun()
 
@@ -121,8 +122,8 @@ def render_sidebar(ctx: AppContext, cookie_manager) -> None:
     with st.sidebar:
         st.write(f"👤 **{ctx.user_id}**님 환영합니다.")
         if st.button("LogOut"):
-            st.session_state["logged_in_user"] = None
-            st.session_state["api_key"] = None
+            st.session_state[LOGGED_IN_USER] = None
+            st.session_state[API_KEY] = None
             _clear_login_cookie(cookie_manager)
             st.rerun()
         st.divider()
@@ -133,7 +134,7 @@ def render_sidebar(ctx: AppContext, cookie_manager) -> None:
             st.error("❌ API Key 연동 실패")
 
         used = monthly_api_usage(ctx.user_id) if ctx.db_conn else 0
-        limit = st.session_state.get("monthly_extract_limit")
+        limit = st.session_state.get(MONTHLY_EXTRACT_LIMIT)
         st.info(
             f"이번 달 사용량: {used} / "
             f"{'무제한' if limit is None else limit}"
@@ -148,14 +149,14 @@ def main() -> None:
     )
     cookie_manager = stx.CookieManager()
     db_conn = get_db()
-    st.session_state.setdefault("logged_in_user", None)
-    st.session_state.setdefault("api_key", None)
-    st.session_state.setdefault("monthly_extract_limit", None)
+    st.session_state.setdefault(LOGGED_IN_USER, None)
+    st.session_state.setdefault(API_KEY, None)
+    st.session_state.setdefault(MONTHLY_EXTRACT_LIMIT, None)
 
-    if not st.session_state["logged_in_user"]:
+    if not st.session_state[LOGGED_IN_USER]:
         _restore_login_from_cookie(cookie_manager, db_conn)
 
-    if not st.session_state["logged_in_user"]:
+    if not st.session_state[LOGGED_IN_USER]:
         render_login(db_conn, cookie_manager)
         st.stop()
 
@@ -163,8 +164,8 @@ def main() -> None:
     ctx = AppContext(
         db_conn=db_conn,
         config=config,
-        api_key=st.session_state.get("api_key") or "",
-        user_id=st.session_state["logged_in_user"],
+        api_key=st.session_state.get(API_KEY) or "",
+        user_id=st.session_state[LOGGED_IN_USER],
         juso_api_key=get_env("JUSO_API_KEY"),
         order_extraction_prompt=cached_prompt(config["prompts"]["order_extraction"]),
         address_to_search_prompt=cached_prompt(config["prompts"]["address_to_search"]),

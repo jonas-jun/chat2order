@@ -130,6 +130,24 @@ python3 main.py \
 | `--output` | 출력 엑셀 파일명 (기본값: `config.yaml`의 `file_name`) |
 | `--config` | 설정 파일 경로 (기본값: `config.yaml`) |
 
+### 학습용 JSONL 변환 스크립트
+
+카카오톡 CSV 대화를 학습용 JSONL로 변환하는 보조 스크립트입니다(앱 런타임과 분리).
+
+```bash
+python convert_chat_csv_to_jsonl.py \
+  --input-dir ./chat_csv \
+  --output-dir ./chat_data \
+  --prefix "이지픽_"
+```
+
+| 옵션 | 설명 |
+|---|---|
+| `--input-dir` | CSV 파일이 있는 폴더 (필수) |
+| `--output-dir` | JSONL 출력 폴더 (없으면 생성, 필수) |
+| `--prefix` | 파일명 접두사 및 glob 패턴 구성 (기본값: `이지픽_`) |
+| `--time-after` | 이 시각 이후 메시지만 포함 (선택, 예: `'2026-07-01 00:00'`) |
+
 ---
 
 ## 설정

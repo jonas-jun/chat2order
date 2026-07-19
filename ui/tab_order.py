@@ -1,4 +1,5 @@
 import datetime
+import hashlib
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +17,7 @@ from database import (
 )
 from excel_utils import write_excel_with_text_zipcode
 from resolver import CatalogIndex
+from session_keys import CHAT_DISPLAY_NAMES, CHAT_UPLOADER_KEY, MONTHLY_EXTRACT_LIMIT
 from services import (
     format_phone_number,
     lookup_zip_code,
@@ -63,7 +65,7 @@ def _render_uploaders():
             '<span class="step-badge">2</span> **대화 내역 업로드**',
             unsafe_allow_html=True,
         )
-        uploader_key = st.session_state.setdefault("chat_uploader_key", 0)
+        uploader_key = st.session_state.setdefault(CHAT_UPLOADER_KEY, 0)
         files = st.file_uploader(
             "카카오톡 대화 파일들을 업로드하세요.",
             type=["csv"],
@@ -72,17 +74,27 @@ def _render_uploaders():
         )
         files, display_names = _dedupe_uploaded_files(files or [])
         if files:
-            st.session_state["chat_display_names"] = display_names
+            st.session_state[CHAT_DISPLAY_NAMES] = display_names
             with st.expander(f"📁 업로드된 파일 {len(files)}개 보기"):
                 for uploaded in files:
-                    st.write(f"• {display_names.get(id(uploaded), uploaded.name)}")
+                    st.write(f"• {display_names.get(_file_key(uploaded), uploaded.name)}")
             if st.button("❌ 업로드 파일 전체 삭제", key="clear_chat_files"):
-                st.session_state["chat_uploader_key"] += 1
+                st.session_state[CHAT_UPLOADER_KEY] += 1
                 st.rerun()
     return catalog_file, files
 
 
-def _dedupe_uploaded_files(files: list) -> tuple[list, dict[int, str]]:
+def _file_key(uploaded) -> str:
+    """업로드 파일의 안정적인 식별 키(파일명 + 내용 해시).
+
+    id()는 rerun마다 객체가 재생성되면 바뀌어 session_state에 저장한 매핑이
+    깨진다. 내용 해시 기반 키는 rerun 간에도 동일하게 유지된다.
+    """
+    digest = hashlib.sha256(uploaded.getvalue()).hexdigest()
+    return f"{uploaded.name}:{digest}"
+
+
+def _dedupe_uploaded_files(files: list) -> tuple[list, dict[str, str]]:
     groups: dict[str, list[tuple[bytes, object]]] = {}
     for uploaded in files:
         content = uploaded.getvalue()
@@ -99,7 +111,7 @@ def _dedupe_uploaded_files(files: list) -> tuple[list, dict[int, str]]:
                 path = Path(name)
                 display_name = f"{path.stem}({index}){path.suffix}"
             unique.append(uploaded)
-            display_names[id(uploaded)] = display_name
+            display_names[_file_key(uploaded)] = display_name
     return unique, display_names
 
 
@@ -132,7 +144,7 @@ def _validate_inputs(ctx, catalog_file, chat_files) -> bool:
 
 
 def _apply_monthly_limit(ctx: AppContext, files: list) -> list:
-    limit = st.session_state.get("monthly_extract_limit")
+    limit = st.session_state.get(MONTHLY_EXTRACT_LIMIT)
     if not ctx.db_conn or limit is None:
         return files
     used = get_monthly_api_call_count(ctx.db_conn, ctx.user_id)
@@ -164,10 +176,10 @@ def _run_extraction(ctx, catalog_file, files, time_after, time_before) -> None:
         sequence = 1
         progress_text = st.empty()
         progress_bar = st.progress(0)
-        display_names = st.session_state.get("chat_display_names", {})
+        display_names = st.session_state.get(CHAT_DISPLAY_NAMES, {})
 
         for position, chat_file in enumerate(files):
-            filename = display_names.get(id(chat_file), chat_file.name)
+            filename = display_names.get(_file_key(chat_file), chat_file.name)
             progress_text.write(f"💬 채팅 내역 분석 중 ({position}/{len(files)})")
             try:
                 result = process_chat_file(

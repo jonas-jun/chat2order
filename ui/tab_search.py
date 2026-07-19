@@ -2,6 +2,12 @@ import streamlit as st
 
 from database import get_raw_files_by_job
 from services import search_keyword_in_raw_csv
+from session_keys import (
+    SEARCH_PAGE,
+    SEARCH_RESULTS,
+    SEARCH_RESULTS_KEYWORD,
+    SEARCH_TRIGGER,
+)
 from ui.common import AppContext, select_job_ui
 
 
@@ -24,13 +30,13 @@ def render(ctx: AppContext) -> None:
         "검색 키워드 (대화 내용에서 정확히 포함된 파일을 찾습니다)",
         key="search_keyword_input",
         placeholder="예: 블랙, 환불, 입금",
-        on_change=lambda: st.session_state.update({"search_trigger": True}),
+        on_change=lambda: st.session_state.update({SEARCH_TRIGGER: True}),
     )
-    triggered = st.session_state.pop("search_trigger", False)
+    triggered = st.session_state.pop(SEARCH_TRIGGER, False)
     if st.button("🔍 검색", type="primary", key="search_run_btn") or triggered:
         _search(ctx, job, keyword)
 
-    result = st.session_state.get("search_results")
+    result = st.session_state.get(SEARCH_RESULTS)
     if not result or result.get("job_id") != job["id"]:
         return
     _render_results(result)
@@ -42,7 +48,7 @@ def _search(ctx: AppContext, job: dict, keyword: str) -> None:
         return
     raw_files = get_raw_files_by_job(conn=ctx.db_conn, job_id=job["id"])
     if not raw_files:
-        st.session_state["search_results"] = None
+        st.session_state[SEARCH_RESULTS] = None
         st.info(
             "이 작업은 원본 대화가 저장되지 않았습니다. "
             "(채팅 검색 기능 적용 이전이거나 DB 미연결 상태로 추출된 작업입니다.)"
@@ -62,7 +68,7 @@ def _search(ctx: AppContext, job: dict, keyword: str) -> None:
                     "content": raw_file.get("content", ""),
                 }
             )
-    st.session_state["search_results"] = {
+    st.session_state[SEARCH_RESULTS] = {
         "keyword": keyword,
         "job_id": job["id"],
         "items": items,
@@ -82,10 +88,10 @@ def _render_results(result: dict) -> None:
 
     page_size = 20
     total_pages = max(1, (len(items) + page_size - 1) // page_size)
-    if st.session_state.get("search_results_keyword") != result["keyword"]:
-        st.session_state["search_page"] = 0
-        st.session_state["search_results_keyword"] = result["keyword"]
-    page = min(st.session_state.get("search_page", 0), total_pages - 1)
+    if st.session_state.get(SEARCH_RESULTS_KEYWORD) != result["keyword"]:
+        st.session_state[SEARCH_PAGE] = 0
+        st.session_state[SEARCH_RESULTS_KEYWORD] = result["keyword"]
+    page = min(st.session_state.get(SEARCH_PAGE, 0), total_pages - 1)
 
     header = st.columns([6, 1])
     header[0].markdown("**채팅명**")
@@ -106,10 +112,10 @@ def _render_results(result: dict) -> None:
     st.caption(f"{page + 1} / {total_pages} 페이지")
     navigation = st.columns([1, 1, 8])
     if navigation[0].button("◀ 이전", key="search_prev", disabled=page == 0):
-        st.session_state["search_page"] = page - 1
+        st.session_state[SEARCH_PAGE] = page - 1
         st.rerun()
     if navigation[1].button(
         "다음 ▶", key="search_next", disabled=page >= total_pages - 1
     ):
-        st.session_state["search_page"] = page + 1
+        st.session_state[SEARCH_PAGE] = page + 1
         st.rerun()
