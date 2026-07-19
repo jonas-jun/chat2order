@@ -4,6 +4,7 @@ import json
 import io
 import unicodedata
 import requests
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -12,7 +13,21 @@ from google import genai
 from google.genai import types
 
 from models import OrderExtractionResult, ResolvedProductItem
-from resolver import CatalogIndex, catalog_list_to_dict, resolve_catalog_item
+from resolver import CatalogIndex, resolve_catalog_item
+
+
+Catalog = dict[str, list[str]]
+
+
+@dataclass
+class ExtractionResult:
+    """파일 하나의 추출 결과. UI와 저장소 계층에 의존하지 않는다."""
+
+    orders: list[dict] = field(default_factory=list)
+    unresolved: list[dict] = field(default_factory=list)
+    raw_file: dict = field(default_factory=dict)
+    chat_data: list[dict] = field(default_factory=list)
+    extracted_data: dict | None = None
 
 
 def parse_custom_jsonl(
@@ -53,32 +68,28 @@ def parse_custom_jsonl(
 
 def extract_orders_from_chat(
     api_key: str,
-    catalog_data: list,
+    catalog_data: Catalog,
     chat_data: list,
     model: str,
     temperature: float,
     prompt_template: str,
 ) -> dict | None:
     """Gemini API를 호출하여 대화에서 주문 정보를 추출합니다."""
-    api_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     prompt = prompt_template.format(
-        catalog=json.dumps(catalog_data, ensure_ascii=False, indent=2),
+        catalog=json.dumps(catalog_to_list(catalog_data), ensure_ascii=False, indent=2),
         chat=json.dumps(chat_data, ensure_ascii=False, indent=2),
     )
 
     try:
-        response = client.models.generate_content(
+        return _generate_json(
+            client=client,
             model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=OrderExtractionResult,
-                temperature=temperature,
-            ),
+            prompt=prompt,
+            schema=OrderExtractionResult,
+            temperature=temperature,
         )
-        return json.loads(response.text)
     except Exception as e:
         import traceback
 
@@ -90,7 +101,7 @@ def extract_orders_from_chat(
 
 def resolve_extracted_items(
     items: list[dict],
-    catalog_data: list,
+    index: CatalogIndex,
 ) -> list[ResolvedProductItem]:
     """LLM이 추출한 items(raw_product/raw_option 포함)를 CatalogResolver로 확정한다.
 
@@ -98,8 +109,6 @@ def resolve_extracted_items(
     카탈로그와 대조한 결과만 저장 대상으로 사용한다. `[주문완료]` 유무와 무관하게
     항상 적용한다.
     """
-    catalog = catalog_list_to_dict(catalog_data)
-    index = CatalogIndex.build(catalog)
     return [
         resolve_catalog_item(
             raw_product=item.get("raw_product"),
@@ -109,6 +118,26 @@ def resolve_extracted_items(
         )
         for item in items
     ]
+
+
+def _gemini_client(api_key: str):
+    """API 키를 정제하고 Gemini 클라이언트를 생성한다."""
+    clean_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
+    return genai.Client(api_key=clean_key)
+
+
+def _generate_json(client, model: str, prompt: str, schema, temperature: float):
+    """공통 JSON structured output 호출."""
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=schema,
+            temperature=temperature,
+        ),
+    )
+    return json.loads(response.text)
 
 
 def lookup_zip_code(address: str | None, juso_api_key: str) -> str | None:
@@ -175,22 +204,18 @@ def extract_search_address(
     prompt_template: str,
 ) -> str | None:
     """Gemini로 단일 주소에서 우편번호 검색용 도로명주소를 추출합니다."""
-    api_key = re.sub(r"[^\x20-\x7E]", "", api_key).strip()
-    client = genai.Client(api_key=api_key)
+    client = _gemini_client(api_key)
 
     prompt = prompt_template.format(address=address)
 
     try:
-        response = client.models.generate_content(
+        result = _generate_json(
+            client=client,
             model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=str | None,
-                temperature=temperature,
-            ),
+            prompt=prompt,
+            schema=str | None,
+            temperature=temperature,
         )
-        result = json.loads(response.text)
         return result if isinstance(result, str) and result.strip() else None
     except Exception:
         return None
@@ -315,21 +340,41 @@ def generate_catalog_from_csv(source) -> dict:
     return catalog
 
 
-def parse_catalog_json(source) -> list:
+def parse_catalog_json(source) -> Catalog:
     """
-    {상품명: [옵션...]} 형태의 JSON 카탈로그를 파싱하여
-    기존 JSONL 형식과 호환되는 list[dict] 형태로 반환합니다.
+    {상품명: [옵션...]} 형태의 JSON 카탈로그를 내부 표준 dict로 반환합니다.
     """
     if isinstance(source, (str, Path)):
         raw = Path(source).read_bytes()
     else:
         raw = source.getvalue()
 
-    catalog_dict = json.loads(raw.decode("utf-8"))
+    catalog = json.loads(raw.decode("utf-8"))
+    if not isinstance(catalog, dict):
+        raise ValueError("카탈로그는 {상품명: [옵션...]} 형태의 JSON 객체여야 합니다.")
+    return {str(product): list(options or []) for product, options in catalog.items()}
+
+
+def catalog_to_list(catalog: Catalog) -> list[dict]:
+    """LLM 프롬프트 등 레거시 외부 경계에서만 사용하는 직렬화 형식."""
     return [
         {"상품명": product, "옵션": options}
-        for product, options in catalog_dict.items()
+        for product, options in catalog.items()
     ]
+
+
+def normalize_catalog(catalog_data: Catalog | list[dict]) -> Catalog:
+    """dict 표준 형식과 기존 list 형식을 내부 표준 dict로 정규화한다."""
+    if isinstance(catalog_data, dict):
+        return {
+            str(product): list(options or [])
+            for product, options in catalog_data.items()
+        }
+    return {
+        entry["상품명"]: list(entry.get("옵션") or [])
+        for entry in catalog_data
+        if entry.get("상품명")
+    }
 
 
 def parse_csv(
@@ -380,6 +425,113 @@ def parse_csv(
         messages.append({"user": user, "message": message})
 
     return messages, timestamp
+
+
+def process_chat_file(
+    chat_file,
+    catalog: Catalog,
+    index: CatalogIndex,
+    config: dict,
+    api_key: str,
+    prompt_template: str,
+    *,
+    display_name: str | None = None,
+    time_after: datetime | None = None,
+    time_before: datetime | None = None,
+    order_number: str | None = None,
+) -> ExtractionResult:
+    """대화 파일 하나를 파싱하고 추출·resolve·row 조립까지 수행한다.
+
+    Streamlit 및 DB 호출을 포함하지 않는다. 호출자는 반환된 원본/추출 결과를
+    필요에 따라 저장하고 사용자에게 진행 상태를 표시한다.
+    """
+    filename = display_name or getattr(chat_file, "name", str(chat_file))
+    suffix = Path(filename).suffix.lower()
+    filename_prefix = config.get("csv", {}).get("filename_prefix", "")
+
+    if suffix == ".csv":
+        chat_data, timestamp = parse_csv(
+            chat_file,
+            filename_prefix=filename_prefix,
+            exclude_messages=config.get("csv", {}).get("exclude_messages", []),
+            time_after=time_after,
+            time_before=time_before,
+        )
+        if isinstance(chat_file, (str, Path)):
+            raw_bytes = Path(chat_file).read_bytes()
+        else:
+            raw_bytes = chat_file.getvalue()
+        raw_content = raw_bytes.decode("utf-8-sig", errors="replace")
+    else:
+        chat_data = parse_custom_jsonl(
+            chat_file, time_after=time_after, time_before=time_before
+        )
+        timestamp = extract_timestamp(filename)
+        raw_content = ""
+
+    chat_name = extract_chat_name(
+        filename,
+        filename_prefix=filename_prefix if suffix == ".csv" else "",
+    )
+    raw_file = {
+        "filename": filename,
+        "chat_name": chat_name,
+        "content": raw_content,
+        "message_count": len(chat_data),
+    }
+
+    extracted_data = extract_orders_from_chat(
+        api_key=api_key,
+        catalog_data=catalog,
+        chat_data=chat_data,
+        model=config["gemini"]["model"],
+        temperature=config["gemini"]["temperature"],
+        prompt_template=prompt_template,
+    )
+    result = ExtractionResult(
+        raw_file=raw_file,
+        chat_data=chat_data,
+        extracted_data=extracted_data,
+    )
+    if not extracted_data:
+        return result
+
+    common = {
+        "order_name": extracted_data.get("order_name"),
+        "phone_number": extracted_data.get("phone_number"),
+        "address": extracted_data.get("address"),
+    }
+    for resolved in resolve_extracted_items(extracted_data.get("items", []), index):
+        if resolved.mapping_status == "unresolved":
+            result.unresolved.append(
+                {
+                    "chat_name": chat_name,
+                    "raw_product": resolved.raw_product,
+                    "raw_option": resolved.raw_option,
+                    "volume": resolved.volume,
+                    "candidate_products": resolved.candidate_products,
+                    "mapping_reason": resolved.mapping_reason,
+                    **common,
+                }
+            )
+            continue
+        result.orders.append(
+            {
+                "product": resolved.product,
+                "option": resolved.option,
+                "volume": resolved.volume,
+                "raw_product": resolved.raw_product,
+                "raw_option": resolved.raw_option,
+                "mapping_status": resolved.mapping_status,
+                **common,
+                "search_address": extracted_data.get("search_address"),
+                "time": timestamp,
+                "chat_name": chat_name,
+                "live_time": time_after,
+                "order_number": order_number,
+            }
+        )
+    return result
 
 
 def search_keyword_in_raw_csv(

@@ -62,8 +62,8 @@ def test_nonexistent_product_option_combo_not_saved():
 
 def test_full_pipeline_via_resolve_extracted_items():
     """LLM이 [주문완료] 두 행을 raw_product/raw_option으로 추출했다고 가정하고,
-    services.resolve_extracted_items()가 CatalogIndex 생성부터 최종 확정까지
-    올바르게 연결하는지 확인한다."""
+    미리 생성된 CatalogIndex를 사용하는 services.resolve_extracted_items()가
+    최종 확정까지 올바르게 연결하는지 확인한다."""
     llm_items = [
         {
             "raw_product": "드래곤백",
@@ -81,7 +81,7 @@ def test_full_pipeline_via_resolve_extracted_items():
         },
     ]
 
-    resolved = resolve_extracted_items(llm_items, CATALOG_LIST)
+    resolved = resolve_extracted_items(llm_items, CatalogIndex.build(CATALOG))
 
     assert resolved[0].product == "드래곤백"
     assert resolved[0].option == "레드"

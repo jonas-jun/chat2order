@@ -62,17 +62,6 @@ def _levenshtein_leq_one(a: str, b: str) -> bool:
     return True
 
 
-def catalog_list_to_dict(catalog_data: list) -> dict[str, list[str]]:
-    """[{"상품명": ..., "옵션": [...]}] 형태를 {상품명: [옵션...]} dict로 변환한다."""
-    catalog: dict[str, list[str]] = {}
-    for entry in catalog_data:
-        product = entry.get("상품명")
-        options = entry.get("옵션") or []
-        if product:
-            catalog[product] = list(options)
-    return catalog
-
-
 @dataclass
 class CatalogIndex:
     catalog: dict[str, list[str]]
