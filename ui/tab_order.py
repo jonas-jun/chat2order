@@ -17,7 +17,12 @@ from database import (
 )
 from excel_utils import write_excel_with_text_zipcode
 from resolver import CatalogIndex
-from session_keys import CHAT_DISPLAY_NAMES, CHAT_UPLOADER_KEY, MONTHLY_EXTRACT_LIMIT
+from session_keys import (
+    CHAT_DISPLAY_NAMES,
+    CHAT_UPLOADER_KEY,
+    MONTHLY_EXTRACT_LIMIT,
+    REVIEW_DEFAULT_JOB_ID,
+)
 from services import (
     format_phone_number,
     lookup_zip_code,
@@ -208,9 +213,13 @@ def _run_extraction(ctx, catalog_file, files, time_after, time_before) -> None:
             _update_progress(progress_bar, progress_text, position, len(files))
 
         _save_batch_result(ctx, job_id, raw_files, unresolved)
+        if job_id:
+            st.session_state[REVIEW_DEFAULT_JOB_ID] = str(job_id)
         status.update(label="🎉 주문 데이터 추출이 완료되었습니다!", state="complete")
 
     _render_result(ctx, job_id, orders, unresolved)
+    if job_id:
+        st.info("추출 결과가 저장되었습니다. `✅ 주문 결과 검수` 탭에서 확인·수정할 수 있습니다.")
 
 
 def _update_progress(bar, text, position: int, total: int) -> None:

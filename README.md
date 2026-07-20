@@ -299,8 +299,27 @@ DB 저장 (Supabase)
  - 학습 데이터로 입력/출력 쌍 저장 (카탈로그 포함)
     │
     ▼
+사용자 검수 (선택)
+ - 채팅 파일별 주문·고객정보 승인 또는 수정
+ - 최초 예측을 보존하고 확정 revision 및 corrected_json 저장
+ - 확정 결과로 Excel 재생성
+    │
+    ▼
 Excel 출력 (.xlsx)
 ```
+
+### 주문 결과 검수 DB migration
+
+`✅ 주문 결과 검수` 탭을 사용하려면 Supabase SQL Editor에서 다음 migration을
+먼저 적용해야 합니다.
+
+```text
+migrations/001_order_reviews.sql
+```
+
+검수 탭은 최초 모델 예측을 덮어쓰지 않고 draft와 confirmed revision을 별도
+저장합니다. 확정본이 있으면 `나의 추출 이력` 탭에서도 최신 confirmed revision을
+우선 다운로드합니다.
 
 ---
 

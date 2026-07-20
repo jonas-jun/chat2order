@@ -277,6 +277,102 @@ def get_orders_by_job(
     return result.data
 
 
+def get_training_records_by_job(
+    conn: Client,
+    job_id: str,
+) -> list[dict]:
+    """검수 화면에 필요한 파일별 원문·예측·라벨을 반환한다."""
+    result = (
+        conn.table("training_data")
+        .select(
+            "id, job_id, chat_filename, catalog_json, chat_json, predicted_json, "
+            "corrected_json, label_status, confirmed_revision, created_at"
+        )
+        .eq("job_id", job_id)
+        .order("created_at")
+        .execute()
+    )
+    return result.data
+
+
+def get_latest_review_version(
+    conn: Client,
+    job_id: str,
+) -> dict | None:
+    """작업의 최신 confirmed 검수 스냅샷을 반환한다."""
+    result = (
+        conn.table("order_review_versions")
+        .select("id, job_id, revision, status, snapshot_json, created_by, confirmed_at")
+        .eq("job_id", job_id)
+        .eq("status", "confirmed")
+        .order("revision", desc=True)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def get_review_draft(
+    conn: Client,
+    job_id: str,
+) -> dict | None:
+    """작업의 저장된 draft를 반환한다."""
+    result = (
+        conn.table("order_review_drafts")
+        .select("job_id, base_revision, snapshot_json, updated_by, updated_at")
+        .eq("job_id", job_id)
+        .limit(1)
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
+def save_review_draft(
+    conn: Client,
+    job_id: str,
+    user_id: str,
+    base_revision: int,
+    snapshot: dict,
+) -> None:
+    """작업별 draft를 소유권 검증 RPC를 통해 저장한다."""
+    conn.rpc(
+        "save_order_review_draft",
+        {
+            "p_job_id": job_id,
+            "p_user_id": user_id,
+            "p_base_revision": base_revision,
+            "p_snapshot": snapshot,
+        },
+    ).execute()
+
+
+def confirm_review(
+    conn: Client,
+    *,
+    job_id: str,
+    user_id: str,
+    base_revision: int,
+    snapshot: dict,
+    labels: list[dict],
+    source_hash: str,
+    idempotency_key: str,
+) -> dict:
+    """검수본을 PostgreSQL RPC 트랜잭션으로 확정한다."""
+    result = conn.rpc(
+        "confirm_order_review",
+        {
+            "p_job_id": job_id,
+            "p_user_id": user_id,
+            "p_base_revision": base_revision,
+            "p_snapshot": snapshot,
+            "p_labels": labels,
+            "p_source_hash": source_hash,
+            "p_idempotency_key": idempotency_key,
+        },
+    ).execute()
+    return result.data or {}
+
+
 def save_raw_chat_files(
     conn: Client,
     job_id: str,
