@@ -25,6 +25,8 @@ COMPLETED_FILE_STATUSES = {
     "no_order_confirmed",
 }
 
+AUTO_CONFIRMED_MAPPING_STATUSES = {"exact", "alias"}
+
 
 def decode_json(value: Any, default=None):
     """DB의 JSON 문자열/jsonb 값을 동일한 Python 값으로 정규화한다."""
@@ -87,19 +89,20 @@ def build_initial_snapshot(
                 volume=_positive_int_or_none(item.get("volume")),
                 index=index,
             )
-            items.append(
-                {
-                    "row_id": f"{record.get('id')}:{position}",
-                    "order_number": _matching_order_number(stored_orders, resolved),
-                    "raw_product": resolved.raw_product,
-                    "raw_option": resolved.raw_option,
-                    "product": resolved.product,
-                    "option": resolved.option,
-                    "volume": resolved.volume,
-                    "mapping_status": resolved.mapping_status,
-                    "mapping_reason": resolved.mapping_reason,
-                }
-            )
+            review_item = {
+                "row_id": f"{record.get('id')}:{position}",
+                "source_position": position,
+                "order_number": _matching_order_number(stored_orders, resolved),
+                "raw_product": resolved.raw_product,
+                "raw_option": resolved.raw_option,
+                "product": resolved.product,
+                "option": resolved.option,
+                "volume": resolved.volume,
+                "mapping_status": resolved.mapping_status,
+                "mapping_reason": resolved.mapping_reason,
+            }
+            review_item["requires_review"] = item_requires_review(review_item)
+            items.append(review_item)
 
         file_review = {
             "training_data_id": str(record.get("id")),
@@ -114,6 +117,9 @@ def build_initial_snapshot(
             "no_order_confirmed": False,
             "items": items,
         }
+        reasons = detect_review_reasons(file_review, record.get("chat_json"))
+        file_review["review_required"] = bool(reasons)
+        file_review["review_reasons"] = reasons
         file_review["source_label_hash"] = label_fingerprint(file_review)
         file_review["source_business_hash"] = business_fingerprint(file_review)
         files.append(file_review)
@@ -124,6 +130,69 @@ def build_initial_snapshot(
         "base_revision": 0,
         "files": files,
     }
+
+
+def item_requires_review(item: dict) -> bool:
+    """Resolver가 확정하지 못했거나 자동 보정한 item인지 판정한다."""
+    return (
+        item.get("mapping_status") not in AUTO_CONFIRMED_MAPPING_STATUSES
+        or _positive_int_or_none(item.get("volume")) is None
+    )
+
+
+def detect_review_reasons(file_review: dict, chat_data: Any) -> list[str]:
+    """일반 사용자에게 보여줄 명백한 불확정 사유를 반환한다."""
+    reasons: list[str] = []
+    items = file_review.get("items") or []
+    messages = decode_json(chat_data, []) or []
+    text = "\n".join(
+        str(message.get("message") or "")
+        if isinstance(message, dict)
+        else str(message)
+        for message in messages
+    )
+    if "[주문완료]" in text and not items:
+        reasons.append("[주문완료] 메시지가 있지만 주문 항목이 추출되지 않음")
+    if any(item.get("mapping_status") == "unresolved" for item in items):
+        reasons.append("상품 또는 옵션을 카탈로그에 자동 매핑하지 못함")
+    if any(item.get("mapping_status") in {"typo", "inferred"} for item in items):
+        reasons.append("오타·축약어 자동 보정 결과 확인 필요")
+    if any(_positive_int_or_none(item.get("volume")) is None for item in items):
+        reasons.append("수량이 없거나 올바른 정수가 아님")
+
+    positions_by_key: dict[tuple, list[int]] = {}
+    for position, item in enumerate(items):
+        key = (
+            _none_if_blank(item.get("raw_product")),
+            _none_if_blank(item.get("raw_option")),
+            _positive_int_or_none(item.get("volume")),
+        )
+        positions_by_key.setdefault(key, []).append(position)
+    duplicate_positions = {
+        position
+        for positions in positions_by_key.values()
+        if len(positions) > 1
+        for position in positions
+    }
+    if duplicate_positions:
+        reasons.append("동일한 주문 항목이 중복 추출됨")
+        for position in duplicate_positions:
+            items[position]["requires_review"] = True
+    return reasons
+
+
+def ensure_review_metadata(snapshot: dict, training_records: list[dict]) -> dict:
+    """이전 draft/revision에도 현재 불확정 판정 메타데이터를 채운다."""
+    records = {str(record.get("id")): record for record in training_records}
+    for file_review in snapshot.get("files") or []:
+        for position, item in enumerate(file_review.get("items") or []):
+            item.setdefault("source_position", position)
+            item.setdefault("requires_review", item_requires_review(item))
+        record = records.get(str(file_review.get("training_data_id")), {})
+        reasons = detect_review_reasons(file_review, record.get("chat_json"))
+        file_review.setdefault("review_required", bool(reasons))
+        file_review.setdefault("review_reasons", reasons)
+    return snapshot
 
 
 def label_fingerprint(file_review: dict) -> str:
@@ -261,7 +330,9 @@ def validate_snapshot(snapshot: dict, catalog: dict[str, list[str]]) -> list[str
         return ["검수할 채팅 파일이 없습니다."]
     for file_review in files:
         for message in validate_file_review(
-            file_review, catalog, require_decision=True
+            file_review,
+            catalog,
+            require_decision=bool(file_review.get("review_required")),
         ):
             errors.append(f"{file_review.get('chat_filename')}: {message}")
     return errors
@@ -332,7 +403,11 @@ def build_training_labels(snapshot: dict) -> list[dict]:
     return [
         {
             "training_data_id": file_review["training_data_id"],
-            "label_status": file_review.get("review_status", "unreviewed"),
+            "label_status": (
+                file_review.get("review_status", "unreviewed")
+                if file_review.get("review_required")
+                else "auto_accepted"
+            ),
             "corrected_json": corrected_json_from_file(file_review),
         }
         for file_review in snapshot.get("files") or []

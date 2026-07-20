@@ -4,6 +4,8 @@ from review_service import (
     build_initial_snapshot,
     build_training_labels,
     classify_file_review,
+    detect_review_reasons,
+    item_requires_review,
     renumber_snapshot,
     snapshot_to_orders,
     validate_file_review,
@@ -86,6 +88,8 @@ def test_build_initial_snapshot_resolves_items_and_preserves_zip_code():
     assert first["items"][0]["product"] == "드래곤백"
     assert first["items"][0]["option"] == "레드"
     assert first["review_status"] == "unreviewed"
+    assert first["review_required"] is False
+    assert first["items"][0]["requires_review"] is False
 
 
 def test_accept_and_no_order_create_gold_labels():
@@ -103,12 +107,34 @@ def test_accept_and_no_order_create_gold_labels():
     assert second["review_status"] == "no_order_confirmed"
     assert validate_snapshot(snapshot, CATALOG) == []
     labels = build_training_labels(snapshot)
+    assert labels[0]["label_status"] == "auto_accepted"
     assert labels[0]["corrected_json"]["items"][0] == {
         "raw_product": "드래곤백",
         "raw_option": "레드",
         "volume": 2,
     }
     assert labels[1]["corrected_json"]["items"] == []
+
+
+def test_inferred_and_unresolved_items_require_review():
+    assert item_requires_review({"mapping_status": "inferred", "volume": 1})
+    assert item_requires_review({"mapping_status": "unresolved", "volume": 1})
+    assert not item_requires_review({"mapping_status": "exact", "volume": 1})
+
+
+def test_order_complete_without_items_requires_review():
+    file_review = {"items": []}
+    reasons = detect_review_reasons(
+        file_review, [{"message": "[주문완료] 드래곤백 레드 1"}]
+    )
+
+    assert any("추출되지 않음" in reason for reason in reasons)
+
+
+def test_only_review_required_files_need_a_decision():
+    snapshot = _snapshot()
+    # 두 파일 모두 일반 자동확정/일반 no-order이므로 사용자 확인이 필요하지 않다.
+    assert validate_snapshot(snapshot, CATALOG) == []
 
 
 def test_changed_raw_value_is_corrected_when_it_exists_in_chat():

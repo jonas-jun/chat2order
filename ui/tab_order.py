@@ -219,7 +219,10 @@ def _run_extraction(ctx, catalog_file, files, time_after, time_before) -> None:
 
     _render_result(ctx, job_id, orders, unresolved)
     if job_id:
-        st.info("추출 결과가 저장되었습니다. `✅ 주문 결과 검수` 탭에서 확인·수정할 수 있습니다.")
+        st.info(
+            "추출 결과가 저장되었습니다. 자동 매핑되지 않은 항목은 "
+            "`🛠️ 불확정 항목 보완` 탭에서 수정할 수 있습니다."
+        )
 
 
 def _update_progress(bar, text, position: int, total: int) -> None:

@@ -1,7 +1,7 @@
 from streamlit.testing.v1 import AppTest
 
 
-def _review_app():
+def _review_app(raw_product="드래곤"):
     import ui.tab_confirm as tab
     from ui.common import AppContext
 
@@ -17,9 +17,15 @@ def _review_app():
         "id": "td-1",
         "job_id": "job-1",
         "chat_filename": "이지픽_고객.csv",
-        "catalog_json": {"드래곤백": ["레드"]},
+        "catalog_json": {
+            "드래곤백": ["레드"],
+            "드래곤 트리플백": ["카멜"],
+        },
         "chat_json": [
-            {"user": "customer", "message": "[주문완료] 드래곤백 레드 1"}
+            {
+                "user": "customer",
+                "message": f"[주문완료] {raw_product} 레드 1",
+            }
         ],
         "predicted_json": {
             "order_name": None,
@@ -27,7 +33,7 @@ def _review_app():
             "address": None,
             "search_address": None,
             "items": [
-                {"raw_product": "드래곤백", "raw_option": "레드", "volume": 1}
+                {"raw_product": raw_product, "raw_option": "레드", "volume": 1}
             ],
         },
         "created_at": "2026-07-20T10:00:00",
@@ -71,19 +77,31 @@ def test_confirm_tab_initial_render_smoke():
 
     assert not app.exception
     assert len(app.selectbox) == 2
-    assert app.selectbox[0].label == "검수할 추출 작업"
-    assert app.selectbox[1].label == "검수할 채팅 파일"
-    assert any(button.label == "이 파일 확인 완료" for button in app.button)
-    assert any(button.label == "✅ 작업 전체 확정" for button in app.button)
+    assert app.selectbox[0].label == "보완할 추출 작업"
+    assert app.selectbox[1].label == "보완할 채팅 파일"
+    assert any(button.label == "이 파일 보완 완료" for button in app.button)
+    assert any(
+        button.label == "🔄 보완 완료 및 주문서 다시 생성"
+        for button in app.button
+    )
 
 
 def test_confirm_tab_can_complete_valid_file():
     app = AppTest.from_function(_review_app).run()
     complete = next(
-        button for button in app.button if button.label == "이 파일 확인 완료"
+        button for button in app.button if button.label == "이 파일 보완 완료"
     )
 
     app = complete.click().run()
 
     assert not app.exception
-    assert "예측 승인" in app.selectbox[1].options[0]
+    assert "확인 완료" in app.selectbox[1].options[0]
+
+
+def test_confirm_tab_hides_exact_items_from_editor():
+    app = AppTest.from_function(_review_app, args=("드래곤백",)).run()
+
+    assert not app.exception
+    assert len(app.selectbox) == 1
+    assert any("보완할 항목이 없습니다" in success.value for success in app.success)
+    assert not any(button.label == "이 파일 보완 완료" for button in app.button)
