@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -483,12 +484,13 @@ def _compact_whitespace(value: Any) -> str:
 
 
 def _chat_name(filename: str, prefix: str) -> str:
-    name = Path(filename).stem
-    if prefix and name.startswith(prefix):
-        name = name[len(prefix):]
+    name = unicodedata.normalize("NFC", Path(filename).stem)
+    normalized_prefix = unicodedata.normalize("NFC", prefix)
+    if normalized_prefix and name.startswith(normalized_prefix):
+        name = name[len(normalized_prefix):]
     else:
         name = re.sub(r"_\d{4}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$", "", name)
-    return name or Path(filename).stem
+    return name or unicodedata.normalize("NFC", Path(filename).stem)
 
 
 def _matching_order_number(stored_orders: list[dict], resolved) -> str | None:

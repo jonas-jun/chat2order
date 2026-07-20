@@ -1,4 +1,5 @@
 import copy
+import unicodedata
 
 from review_service import (
     build_initial_snapshot,
@@ -91,6 +92,25 @@ def test_build_initial_snapshot_resolves_items_and_preserves_zip_code():
     assert first["review_status"] == "unreviewed"
     assert first["review_required"] is False
     assert first["items"][0]["requires_review"] is False
+
+
+def test_build_initial_snapshot_normalizes_macos_decomposed_chat_filename():
+    records = copy.deepcopy(TRAINING_RECORDS[:1])
+    records[0]["chat_filename"] = unicodedata.normalize(
+        "NFD", "이지픽_이경숙.csv"
+    )
+
+    snapshot = build_initial_snapshot(
+        "job-1",
+        records,
+        CATALOG,
+        filename_prefix="이지픽_",
+    )
+
+    assert snapshot["files"][0]["chat_name"] == "이경숙"
+    assert unicodedata.is_normalized(
+        "NFC", snapshot["files"][0]["chat_name"]
+    )
 
 
 def test_accept_and_no_order_create_gold_labels():
