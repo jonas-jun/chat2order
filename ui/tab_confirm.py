@@ -310,68 +310,45 @@ def _render_file_editor(
                 hide_index=True,
             )
 
-    with st.form(f"{key_prefix}_form"):
-        st.markdown("#### 확인이 필요한 주문 항목")
-        st.caption("아래 항목만 보완할 수 있습니다. 자동 확정 항목은 변경되지 않습니다.")
-        edited = st.data_editor(
-            _items_frame(review_items),
-            num_rows="dynamic",
-            width="stretch",
-            hide_index=True,
-            column_order=(
-                "raw_product",
-                "raw_option",
-                "product",
-                "option",
-                "volume",
-                "mapping_status",
-                "mapping_reason",
-                "row_id",
-                "source_position",
-            ),
-            column_config={
-                "raw_product": st.column_config.TextColumn("원문 상품"),
-                "raw_option": st.column_config.TextColumn("원문 옵션"),
-                "product": st.column_config.SelectboxColumn(
-                    "상품명", options=list(catalog.keys())
-                ),
-                "option": st.column_config.SelectboxColumn(
-                    "옵션명",
-                    options=sorted(
-                        {option for options in catalog.values() for option in options}
-                    ),
-                ),
-                "volume": st.column_config.NumberColumn("수량", min_value=1, step=1),
-                "mapping_status": st.column_config.TextColumn("매핑", disabled=True),
-                "mapping_reason": st.column_config.TextColumn(
-                    "보완 사유", disabled=True
-                ),
-                "row_id": None,
-                "source_position": None,
-            },
-            key=f"{key_prefix}_items",
-        )
-        no_order = False
-        if not locked_items:
-            no_order = st.checkbox(
-                "해당 불확정 항목은 실제 주문이 아닙니다",
-                value=bool(file_review.get("no_order_confirmed")),
-                key=f"{key_prefix}_no_order",
-            )
-        buttons = st.columns(2)
-        save_clicked = buttons[0].form_submit_button("임시저장", width="stretch")
-        complete_clicked = buttons[1].form_submit_button(
-            "이 파일 보완 완료", type="primary", width="stretch"
+    st.markdown("#### 확인이 필요한 주문 항목")
+    st.caption(
+        "상품명을 먼저 선택하면 해당 상품의 옵션만 표시됩니다. "
+        "자동 확정 항목은 변경되지 않습니다."
+    )
+    edited_rows = _render_review_item_cards(review_items, catalog, key_prefix)
+    no_order = False
+    if not locked_items:
+        no_order = st.checkbox(
+            "해당 불확정 항목은 실제 주문이 아닙니다",
+            value=bool(file_review.get("no_order_confirmed")),
+            key=f"{key_prefix}_no_order",
         )
 
-    if not (save_clicked or complete_clicked):
+    actions = st.columns(3)
+    add_clicked = actions[0].button(
+        "➕ 주문 항목 추가", key=f"{key_prefix}_add", width="stretch"
+    )
+    save_clicked = actions[1].button(
+        "임시저장", key=f"{key_prefix}_save", width="stretch"
+    )
+    complete_clicked = actions[2].button(
+        "이 파일 보완 완료",
+        key=f"{key_prefix}_complete",
+        type="primary",
+        width="stretch",
+    )
+
+    if not (add_clicked or save_clicked or complete_clicked):
         return
-    _update_file_from_form(
+    _update_file_from_rows(
         file_review,
-        edited,
+        edited_rows,
         locked_items=locked_items,
         no_order=no_order,
     )
+    if add_clicked:
+        _append_blank_review_item(file_review)
+        st.rerun()
     if complete_clicked:
         errors = validate_file_review(file_review, catalog)
         if errors:
@@ -419,14 +396,142 @@ def _items_frame(items: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(items, columns=columns, dtype=object)
 
 
-def _update_file_from_form(file_review: dict, edited: pd.DataFrame, **values) -> None:
+def _render_review_item_cards(
+    items: list[dict],
+    catalog: dict[str, list[str]],
+    key_prefix: str,
+) -> list[dict]:
+    rows = []
+    for position, item in enumerate(items, start=1):
+        row_id = str(item.get("row_id") or uuid.uuid4())
+        widget_prefix = f"{key_prefix}_{row_id}"
+        with st.container(border=True):
+            st.caption(
+                f"불확정 항목 {position} · "
+                f"{item.get('mapping_reason') or item.get('mapping_status') or '확인 필요'}"
+            )
+            raw_columns = st.columns([2, 2, 1])
+            raw_product = raw_columns[0].text_input(
+                "원문 상품",
+                value=item.get("raw_product") or "",
+                key=f"{widget_prefix}_raw_product",
+            )
+            raw_option = raw_columns[1].text_input(
+                "원문 옵션",
+                value=item.get("raw_option") or "",
+                key=f"{widget_prefix}_raw_option",
+            )
+            volume = raw_columns[2].number_input(
+                "수량",
+                min_value=1,
+                step=1,
+                value=_initial_volume(item.get("volume")),
+                key=f"{widget_prefix}_volume",
+            )
+
+            product_key = f"{widget_prefix}_product"
+            option_key = f"{widget_prefix}_option"
+            product_choices = [""] + list(catalog.keys())
+            product = st.selectbox(
+                "상품명",
+                options=product_choices,
+                index=_choice_index(product_choices, item.get("product")),
+                key=product_key,
+                on_change=_reset_dependent_option,
+                args=(product_key, option_key, catalog),
+            )
+            available_options = list(catalog.get(product, []))
+            option_choices = [""] + available_options
+            if option_key in st.session_state and st.session_state[option_key] not in option_choices:
+                st.session_state[option_key] = (
+                    available_options[0] if len(available_options) == 1 else ""
+                )
+            initial_option = item.get("option")
+            if not initial_option and len(available_options) == 1:
+                initial_option = available_options[0]
+            option = st.selectbox(
+                "옵션명",
+                options=option_choices,
+                index=_choice_index(option_choices, initial_option),
+                key=option_key,
+                disabled=not product or len(available_options) <= 1,
+            )
+            excluded = st.checkbox(
+                "이 항목 제외",
+                value=False,
+                key=f"{widget_prefix}_excluded",
+            )
+        rows.append(
+            {
+                **item,
+                "row_id": row_id,
+                "raw_product": raw_product,
+                "raw_option": raw_option,
+                "product": product,
+                "option": option,
+                "volume": volume,
+                "excluded": excluded,
+            }
+        )
+    return rows
+
+
+def _reset_dependent_option(
+    product_key: str,
+    option_key: str,
+    catalog: dict[str, list[str]],
+) -> None:
+    options = list(catalog.get(st.session_state.get(product_key), []))
+    current = st.session_state.get(option_key)
+    if current not in options:
+        st.session_state[option_key] = options[0] if len(options) == 1 else ""
+
+
+def _choice_index(choices: list[str], value) -> int:
+    try:
+        return choices.index(value or "")
+    except ValueError:
+        return 0
+
+
+def _initial_volume(value) -> int:
+    cleaned = _clean_volume(value)
+    return cleaned if isinstance(cleaned, int) and cleaned > 0 else 1
+
+
+def _append_blank_review_item(file_review: dict) -> None:
+    next_position = max(
+        (int(item.get("source_position", -1)) for item in file_review.get("items") or []),
+        default=-1,
+    ) + 1
+    file_review.setdefault("items", []).append(
+        {
+            "row_id": str(uuid.uuid4()),
+            "source_position": next_position,
+            "order_number": None,
+            "raw_product": None,
+            "raw_option": None,
+            "product": None,
+            "option": None,
+            "volume": 1,
+            "mapping_status": "manual",
+            "mapping_reason": "사용자가 추가한 주문 항목",
+            "requires_review": True,
+        }
+    )
+    file_review["review_status"] = "unreviewed"
+
+
+def _update_file_from_rows(file_review: dict, edited_rows: list[dict], **values) -> None:
     file_review["no_order_confirmed"] = bool(values["no_order"])
     items = list(values["locked_items"])
     next_position = max(
         (int(item.get("source_position", -1)) for item in file_review.get("items") or []),
         default=-1,
     ) + 1
-    for row in edited.to_dict("records"):
+    for row in edited_rows:
+        if row.get("excluded"):
+            continue
         if not any(
             _clean_cell(row.get(key))
             for key in ("raw_product", "product", "option", "volume")

@@ -76,7 +76,7 @@ def test_confirm_tab_initial_render_smoke():
     app = AppTest.from_function(_review_app).run()
 
     assert not app.exception
-    assert len(app.selectbox) == 2
+    assert len(app.selectbox) == 4
     assert app.selectbox[0].label == "보완할 추출 작업"
     assert app.selectbox[1].label == "보완할 채팅 파일"
     assert any(button.label == "이 파일 보완 완료" for button in app.button)
@@ -105,3 +105,15 @@ def test_confirm_tab_hides_exact_items_from_editor():
     assert len(app.selectbox) == 1
     assert any("보완할 항목이 없습니다" in success.value for success in app.success)
     assert not any(button.label == "이 파일 보완 완료" for button in app.button)
+
+
+def test_product_selection_limits_option_choices():
+    app = AppTest.from_function(_review_app).run()
+    product = next(box for box in app.selectbox if box.label == "상품명")
+
+    app = product.select("드래곤 트리플백").run()
+
+    assert not app.exception
+    option = next(box for box in app.selectbox if box.label == "옵션명")
+    assert option.options == ["", "카멜"]
+    assert option.value == "카멜"
