@@ -3,8 +3,9 @@ import json
 import pandas as pd
 import streamlit as st
 
-from database import get_catalog_by_job, get_orders_by_job
+from database import get_catalog_by_job, get_latest_review_version, get_orders_by_job
 from excel_utils import write_excel_with_text_zipcode
+from review_service import decode_json, snapshot_to_orders
 from services import normalize_catalog, normalize_zip_code
 from ui.common import AppContext, select_job_ui
 
@@ -24,7 +25,19 @@ def render(ctx: AppContext) -> None:
         st.info("저장된 추출 이력이 없습니다.")
         return
 
-    orders = get_orders_by_job(conn=ctx.db_conn, job_id=job["id"])
+    review = None
+    try:
+        review = get_latest_review_version(conn=ctx.db_conn, job_id=job["id"])
+    except Exception:
+        # Migration 적용 전에도 기존 이력 다운로드는 계속 동작해야 한다.
+        review = None
+    if review:
+        snapshot = decode_json(review.get("snapshot_json"), {}) or {}
+        orders = snapshot_to_orders(snapshot)
+        st.success(f"사용자 확정본 revision {review['revision']}입니다.")
+    else:
+        orders = get_orders_by_job(conn=ctx.db_conn, job_id=job["id"])
+        st.warning("아직 사용자 검수를 거치지 않은 최초 예측본입니다.")
     if not orders:
         st.info("해당 이력에 저장된 주문 데이터가 없습니다.")
         return
@@ -48,7 +61,10 @@ def render(ctx: AppContext) -> None:
             data=write_excel_with_text_zipcode(
                 frame, ctx.config["output"]["sheet_name"]
             ),
-            file_name=f"{job['title']}.xlsx",
+            file_name=(
+                f"{job['title']}_confirmed_r{review['revision']}.xlsx"
+                if review else f"{job['title']}_unreviewed.xlsx"
+            ),
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary",
             key="hist_download_btn",

@@ -14,7 +14,14 @@ from database import (
 )
 from session_keys import API_KEY, LOGGED_IN_USER, MONTHLY_EXTRACT_LIMIT
 from settings import get_env, load_prompt
-from ui import tab_catalog, tab_history, tab_order, tab_search, tab_zipcode
+from ui import (
+    tab_catalog,
+    tab_confirm,
+    tab_history,
+    tab_order,
+    tab_search,
+    tab_zipcode,
+)
 from ui.common import AppContext
 
 
@@ -183,6 +190,7 @@ def main() -> None:
     tabs = st.tabs(
         [
             "📦 주문서 추출",
+            "🛠️ 불확정 항목 보완",
             "📋 카탈로그 생성",
             "📮 우편번호 추출",
             "🗂️ 나의 추출 이력",
@@ -191,6 +199,7 @@ def main() -> None:
     )
     renderers = (
         tab_order.render,
+        tab_confirm.render,
         tab_catalog.render,
         tab_zipcode.render,
         tab_history.render,

@@ -13,6 +13,15 @@ MONTHLY_EXTRACT_LIMIT = "monthly_extract_limit"
 CHAT_DISPLAY_NAMES = "chat_display_names"
 CHAT_UPLOADER_KEY = "chat_uploader_key"
 
+# 주문 결과 검수 탭
+REVIEW_DEFAULT_JOB_ID = "review_default_job_id"
+REVIEW_JOB_ID = "review_job_id"
+REVIEW_SNAPSHOT = "review_snapshot"
+REVIEW_TRAINING_RECORDS = "review_training_records"
+REVIEW_SELECTED_FILE_ID = "review_selected_file_id"
+REVIEW_CONFIRMED_REVISION = "review_confirmed_revision"
+REVIEW_NEXT_FILE_ID = "review_next_file_id"
+
 # 채팅 검색 탭
 SEARCH_TRIGGER = "search_trigger"
 SEARCH_RESULTS = "search_results"
