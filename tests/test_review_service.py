@@ -6,6 +6,7 @@ from review_service import (
     classify_file_review,
     detect_review_reasons,
     item_requires_review,
+    next_pending_review_file_id,
     renumber_snapshot,
     snapshot_to_orders,
     validate_file_review,
@@ -135,6 +136,32 @@ def test_only_review_required_files_need_a_decision():
     snapshot = _snapshot()
     # 두 파일 모두 일반 자동확정/일반 no-order이므로 사용자 확인이 필요하지 않다.
     assert validate_snapshot(snapshot, CATALOG) == []
+
+
+def test_next_pending_review_file_skips_completed_files():
+    snapshot = {
+        "files": [
+            {
+                "training_data_id": "a",
+                "review_required": True,
+                "review_status": "accepted",
+            },
+            {
+                "training_data_id": "b",
+                "review_required": True,
+                "review_status": "corrected",
+            },
+            {
+                "training_data_id": "c",
+                "review_required": True,
+                "review_status": "unreviewed",
+            },
+        ]
+    }
+
+    assert next_pending_review_file_id(snapshot, "a") == "c"
+    snapshot["files"][2]["review_status"] = "accepted"
+    assert next_pending_review_file_id(snapshot, "a") is None
 
 
 def test_changed_raw_value_is_corrected_when_it_exists_in_chat():

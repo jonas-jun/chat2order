@@ -195,6 +195,34 @@ def ensure_review_metadata(snapshot: dict, training_records: list[dict]) -> dict
     return snapshot
 
 
+def next_pending_review_file_id(snapshot: dict, current_id: str) -> str | None:
+    """현재 파일 다음에 있는 미완료 보완 파일 ID를 반환한다."""
+    files = [
+        file_review
+        for file_review in snapshot.get("files") or []
+        if file_review.get("review_required")
+    ]
+    if not files:
+        return None
+    current_index = next(
+        (
+            index
+            for index, file_review in enumerate(files)
+            if file_review.get("training_data_id") == current_id
+        ),
+        -1,
+    )
+    ordered = files[current_index + 1 :] + files[: current_index + 1]
+    return next(
+        (
+            file_review.get("training_data_id")
+            for file_review in ordered
+            if file_review.get("review_status") not in COMPLETED_FILE_STATUSES
+        ),
+        None,
+    )
+
+
 def label_fingerprint(file_review: dict) -> str:
     """모델이 학습할 필드만 비교하는 안정적인 해시."""
     payload = corrected_json_from_file(file_review)

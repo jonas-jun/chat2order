@@ -20,6 +20,7 @@ REVIEW_SNAPSHOT = "review_snapshot"
 REVIEW_TRAINING_RECORDS = "review_training_records"
 REVIEW_SELECTED_FILE_ID = "review_selected_file_id"
 REVIEW_CONFIRMED_REVISION = "review_confirmed_revision"
+REVIEW_NEXT_FILE_ID = "review_next_file_id"
 
 # 채팅 검색 탭
 SEARCH_TRIGGER = "search_trigger"

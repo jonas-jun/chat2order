@@ -24,6 +24,7 @@ from review_service import (
     classify_file_review,
     decode_json,
     ensure_review_metadata,
+    next_pending_review_file_id,
     normalize_catalog,
     renumber_snapshot,
     snapshot_hash,
@@ -36,6 +37,7 @@ from session_keys import (
     REVIEW_CONFIRMED_REVISION,
     REVIEW_DEFAULT_JOB_ID,
     REVIEW_JOB_ID,
+    REVIEW_NEXT_FILE_ID,
     REVIEW_SELECTED_FILE_ID,
     REVIEW_SNAPSHOT,
     REVIEW_TRAINING_RECORDS,
@@ -207,11 +209,17 @@ def _select_file(snapshot: dict) -> dict | None:
     files = _review_files(snapshot)
     if not files:
         return None
+    pending_next = st.session_state.pop(REVIEW_NEXT_FILE_ID, None)
+    if pending_next:
+        st.session_state[REVIEW_SELECTED_FILE_ID] = pending_next
     current = st.session_state.get(REVIEW_SELECTED_FILE_ID)
     index = next(
         (i for i, item in enumerate(files) if item["training_data_id"] == current),
         0,
     )
+    selectbox_key = f"review_file_select_{snapshot['job_id']}"
+    if pending_next:
+        st.session_state[selectbox_key] = index
     selected_index = st.selectbox(
         "보완할 채팅 파일",
         options=range(len(files)),
@@ -220,7 +228,7 @@ def _select_file(snapshot: dict) -> dict | None:
             f"{STATUS_LABELS.get(files[i].get('review_status'), '보완 필요')} · "
             f"{files[i].get('chat_filename')}"
         ),
-        key=f"review_file_select_{snapshot['job_id']}",
+        key=selectbox_key,
     )
     selected = files[selected_index]
     st.session_state[REVIEW_SELECTED_FILE_ID] = selected["training_data_id"]
@@ -386,6 +394,12 @@ def _render_file_editor(
     except Exception as exc:
         st.error(f"임시저장에 실패했습니다: {exc}")
         return
+    if complete_clicked:
+        next_id = next_pending_review_file_id(
+            snapshot, file_review["training_data_id"]
+        )
+        if next_id:
+            st.session_state[REVIEW_NEXT_FILE_ID] = next_id
     st.success("보완 결과를 임시저장했습니다.")
     st.rerun()
 
