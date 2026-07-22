@@ -1,0 +1,66 @@
+experiment_name: qwen3_5-2b-base
+wandb_project: chat2order
+
+model:
+  name_or_path: /workspace/storage/paip-kelp-dev/models/Qwen--Qwen3.5-2B
+  hub_id: Qwen/Qwen3.5-2B
+  revision: 28f4a2c82736bd3e31d36fd9e1503863df738396
+  dtype: bfloat16
+  attn_implementation: sdpa
+  trust_remote_code: false
+
+data:
+  train_file: working/dataset/recovery_v1/splits/train.jsonl
+  validation_file: working/dataset/recovery_v1/splits/validation.jsonl
+  cache_dir: train/cache
+  max_length: 4096
+  truncation: error
+  prompt_head_tokens: 512
+  preprocessing_num_workers: 4
+  # Qwen3.5 thinks by default; keep training and inference prompts identical.
+  chat_template_kwargs:
+    enable_thinking: false
+
+lora:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.05
+  bias: none
+  use_rslora: true
+  # Cover both gated DeltaNet and full-attention token-mixing layers.
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - in_proj_qkv
+    - in_proj_z
+    - in_proj_b
+    - in_proj_a
+    - out_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+training:
+  seed: 42
+  num_train_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0001
+  weight_decay: 0.01
+  warmup_ratio: 0.05
+  lr_scheduler_type: cosine
+  max_grad_norm: 1.0
+  gradient_checkpointing: true
+  tf32: true
+  optim: adamw_torch_fused
+  logging_steps: 5
+  eval_strategy: steps
+  eval_steps: 25
+  save_strategy: steps
+  save_steps: 25
+  save_total_limit: 3
+  dataloader_num_workers: 2
+  report_to: wandb

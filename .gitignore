@@ -250,6 +250,12 @@ instructions/*
 # Training data DB
 *.db
 
+# Local SFT data, caches, and model artifacts
+train/dataset/*
+!train/dataset/.gitkeep
+train/outputs/
+train/cache/
+
 # for claude
 working
 
