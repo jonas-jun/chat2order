@@ -148,6 +148,41 @@ python convert_chat_csv_to_jsonl.py \
 | `--prefix` | 파일명 접두사 및 glob 패턴 구성 (기본값: `이지픽_`) |
 | `--time-after` | 이 시각 이후 메시지만 포함 (선택, 예: `'2026-07-01 00:00'`) |
 
+### 다른 장비에서 LoRA 모델 불러오기
+
+SFT 학습이 끝나면 최종 adapter가 `<experiment_name>:latest` W&B Artifact로 업로드됩니다. Artifact의 `training_manifest.json`에는 학습에 사용한 base model의 Hugging Face ID와 고정 commit이 기록됩니다.
+
+```python
+import json
+from pathlib import Path
+
+import torch
+import wandb
+from peft import PeftModel
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+artifact = wandb.Api().artifact(
+    "<entity>/chat2order/qwen3_5-4b-base:latest",
+    type="model",
+)
+adapter_dir = Path(artifact.download())
+manifest = json.loads(
+    (adapter_dir / "training_manifest.json").read_text(encoding="utf-8")
+)
+
+base_model = AutoModelForCausalLM.from_pretrained(
+    manifest["base_model_hub_id"],
+    revision=manifest["base_model_revision"],
+    dtype=torch.bfloat16,
+    device_map="auto",
+)
+model = PeftModel.from_pretrained(base_model, adapter_dir)
+tokenizer = AutoTokenizer.from_pretrained(adapter_dir)
+model.eval()
+```
+
+학습 설정, W&B 로그인, 추론 CLI 사용법은 [train/README.md](train/README.md)를 참고하세요.
+
 ---
 
 ## 설정
