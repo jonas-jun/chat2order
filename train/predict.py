@@ -11,6 +11,12 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from train.data import build_user_content, iter_jsonl
+from train.quantization import (
+    ensure_no_cpu_offload,
+    quantized_inventory,
+    read_quantization_manifest,
+    validate_quantized_inventory,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,6 +68,9 @@ def _portable_base_model(model_path: Path) -> tuple[str | None, str | None]:
 
 def load_model(model_path: Path, base_model: str | None = None) -> tuple[Any, Any]:
     adapter_path = model_path / "adapter_config.json"
+    quantization_manifest = read_quantization_manifest(model_path)
+    if adapter_path.is_file() and quantization_manifest is not None:
+        raise ValueError("a model directory cannot be both a LoRA adapter and quantized")
     if adapter_path.is_file():
         from peft import PeftConfig, PeftModel
 
@@ -79,6 +88,22 @@ def load_model(model_path: Path, base_model: str | None = None) -> tuple[Any, An
             low_cpu_mem_usage=True,
         )
         model = PeftModel.from_pretrained(base, model_path)
+    elif quantization_manifest is not None:
+        if base_model is not None:
+            raise ValueError("--base-model cannot be used with a quantized checkpoint")
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            dtype=torch.bfloat16,
+            device_map="auto",
+            low_cpu_mem_usage=True,
+        )
+        ensure_no_cpu_offload(model)
+        inventory = quantized_inventory(model)
+        validate_quantized_inventory(
+            inventory,
+            str(quantization_manifest["backend"]),
+            context=str(model_path),
+        )
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_path,

@@ -74,6 +74,11 @@ def parse_args() -> argparse.Namespace:
     score.add_argument("--prediction", action="append", required=True, metavar="ID=PATH")
     score.add_argument("--output-dir", type=Path, required=True)
     score.add_argument("--bootstrap-samples", type=int, default=10_000)
+    score.add_argument(
+        "--allow-nonfixed-input",
+        action="store_true",
+        help="Allow scoring validation/smoke data instead of the fixed 35-row test.",
+    )
 
     examples = subparsers.add_parser(
         "examples", help="Export selected input/gold/prediction rows as Markdown"
@@ -472,7 +477,12 @@ def _mcnemar_exact(a: list[bool], b: list[bool]) -> tuple[int, int, float]:
     return a_only, b_only, min(1.0, 2 * tail)
 
 
-def _manifest(input_path: Path, prediction_paths: Mapping[str, Path]) -> dict[str, Any]:
+def _manifest(
+    input_path: Path,
+    prediction_paths: Mapping[str, Path],
+    *,
+    input_rows: int,
+) -> dict[str, Any]:
     try:
         commit = subprocess.run(
             ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
@@ -486,21 +496,35 @@ def _manifest(input_path: Path, prediction_paths: Mapping[str, Path]) -> dict[st
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:
             versions[package] = None
-    return {
+    value = {
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "test_file": str(input_path),
-        "test_sha256": file_sha256(input_path),
-        "test_rows": EXPECTED_TEST_ROWS,
+        "input_file": str(input_path),
+        "input_sha256": file_sha256(input_path),
+        "input_rows": input_rows,
         "predictions": {name: {"path": str(path), "sha256": file_sha256(path)} for name, path in prediction_paths.items()},
         "git_commit": commit,
         "git_dirty": dirty,
         "python": platform.python_version(),
         "packages": versions,
     }
+    if (
+        input_rows == EXPECTED_TEST_ROWS
+        and value["input_sha256"] == EXPECTED_TEST_SHA256
+    ):
+        value.update(
+            {
+                "test_file": value["input_file"],
+                "test_sha256": value["input_sha256"],
+                "test_rows": value["input_rows"],
+            }
+        )
+    return value
 
 
 def run_score(args: argparse.Namespace) -> None:
-    examples = _load_examples(args.input)
+    examples = _load_examples(
+        args.input, enforce_fixed_test=not args.allow_nonfixed_input
+    )
     paths: dict[str, Path] = {}
     for specification in args.prediction:
         if "=" not in specification:
@@ -549,7 +573,10 @@ def run_score(args: argparse.Namespace) -> None:
         })
     write_json(args.output_dir / "aggregate.json", aggregates)
     write_json(args.output_dir / "pairwise.json", pairwise)
-    write_json(args.output_dir / "manifest.json", _manifest(args.input, paths))
+    write_json(
+        args.output_dir / "manifest.json",
+        _manifest(args.input, paths, input_rows=len(examples)),
+    )
     with (args.output_dir / "per_example.jsonl").open("w", encoding="utf-8") as handle:
         for row in per_example:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
