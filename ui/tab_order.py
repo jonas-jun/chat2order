@@ -7,7 +7,6 @@ import streamlit as st
 
 from database import (
     create_extraction_job,
-    get_monthly_api_call_count,
     save_extract_call_log,
     save_extracted_orders,
     save_raw_chat_files,
@@ -25,7 +24,12 @@ from services import (
     parse_catalog_json,
     process_chat_file,
 )
-from ui.common import AppContext
+from settings import current_month_key
+from ui.common import (
+    AppContext,
+    clear_monthly_api_usage_cache,
+    monthly_api_usage,
+)
 
 
 MAPPING_STATUS_LABELS = {
@@ -147,7 +151,7 @@ def _apply_monthly_limit(ctx: AppContext, files: list) -> list:
     limit = st.session_state.get(MONTHLY_EXTRACT_LIMIT)
     if not ctx.db_conn or limit is None:
         return files
-    used = get_monthly_api_call_count(ctx.db_conn, ctx.user_id)
+    used = monthly_api_usage(ctx.db_conn, ctx.user_id, current_month_key())
     remaining = limit - used
     if remaining <= 0:
         st.error(
@@ -208,6 +212,7 @@ def _run_extraction(ctx, catalog_file, files, time_after, time_before) -> None:
             _update_progress(progress_bar, progress_text, position, len(files))
 
         _save_batch_result(ctx, job_id, raw_files, unresolved)
+        clear_monthly_api_usage_cache()
         status.update(label="🎉 주문 데이터 추출이 완료되었습니다!", state="complete")
 
     _render_result(ctx, job_id, orders, unresolved)
