@@ -4,6 +4,8 @@ from datetime import datetime
 
 from supabase import create_client, Client
 
+from settings import kst_month_range
+
 
 def _clean(value):
     """pandas NaN을 JSON 직렬화 가능한 None으로 변환한다."""
@@ -232,14 +234,14 @@ def save_extract_call_log(
 
 
 def get_monthly_api_call_count(conn: Client, user_id: str) -> int:
-    """이번 달(1일~말일) 동안 user_id의 API 호출 횟수를 반환합니다."""
-    now = datetime.now()
-    month_start = datetime(now.year, now.month, 1).isoformat()
+    """이번 달(KST 기준 1일 00:00 ~ 말일 24:00) user_id의 API 호출 횟수를 반환합니다."""
+    month_start, next_month = kst_month_range()
     result = (
         conn.table("extract_call_logs")
         .select("id", count="exact")
         .eq("user_id", user_id)
-        .gte("called_at", month_start)
+        .gte("called_at", month_start.isoformat())
+        .lt("called_at", next_month.isoformat())
         .execute()
     )
     return result.count if result.count is not None else 0

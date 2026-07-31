@@ -10,12 +10,11 @@ from database import (
     authenticate_user,
     get_account_by_user_id,
     get_connection,
-    get_monthly_api_call_count,
 )
 from session_keys import API_KEY, LOGGED_IN_USER, MONTHLY_EXTRACT_LIMIT
-from settings import get_env, load_prompt
+from settings import current_month_key, get_env, load_prompt
 from ui import tab_catalog, tab_history, tab_order, tab_search, tab_zipcode
-from ui.common import AppContext
+from ui.common import AppContext, monthly_api_usage
 
 
 @st.cache_resource
@@ -38,12 +37,6 @@ def load_static_text(path: str) -> str:
 @st.cache_data
 def cached_prompt(path: str) -> str:
     return load_prompt(path)
-
-
-@st.cache_data(ttl=60)
-def monthly_api_usage(user_id: str) -> int:
-    connection = get_db()
-    return get_monthly_api_call_count(connection, user_id) if connection else 0
 
 
 def _persist_login_cookie(cookie_manager, user_id: str) -> None:
@@ -133,7 +126,7 @@ def render_sidebar(ctx: AppContext, cookie_manager) -> None:
         else:
             st.error("❌ API Key 연동 실패")
 
-        used = monthly_api_usage(ctx.user_id) if ctx.db_conn else 0
+        used = monthly_api_usage(ctx.db_conn, ctx.user_id, current_month_key())
         limit = st.session_state.get(MONTHLY_EXTRACT_LIMIT)
         st.info(
             f"이번 달 사용량: {used} / "
