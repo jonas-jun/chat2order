@@ -1,17 +1,33 @@
-torch>=2.10.0,<2.11.0
-transformers>=5.14.0,<6.0.0
-datasets>=4.0.0,<6.0.0
-accelerate>=1.10.0,<2.0.0
-peft>=0.19.0,<1.0.0
-PyYAML>=6.0.2,<7.0.0
-safetensors>=0.5.0,<1.0.0
-sentencepiece>=0.2.0,<1.0.0
-wandb>=0.19.0,<1.0.0
-# Optional deployment experiments. Pin exact working versions in each
-# quantization run's environment manifest.
-torchao>=0.17.0,<1.0.0
-mslk-cuda>=1.0.0,<2.0.0
-bitsandbytes>=0.49.2,<1.0.0
+# Pinned to the versions the recorded experiments actually ran on, so a fresh
+# environment reproduces them. Source: the four SFT runs' training_manifest.json
+# (torch 2.13.0+cu130) and the 2026-07-22 evaluation's scores/manifest.json.
+torch==2.13.0
+transformers==5.14.1
+datasets==5.0.0
+accelerate==1.14.0
+peft==0.19.1
+PyYAML==6.0.3
+safetensors==0.8.0
+sentencepiece==0.2.2
+wandb==0.28.1
+# Required by train/evaluate.py's Gemini backend. Keep this in sync with the
+# repository-root requirements.txt. The 2026-07-22 evaluation ran on 1.70.0; we
+# standardised on the higher 2.11.0 after verifying that every SDK symbol
+# evaluate.py uses still exists there.
+google-genai==2.11.0
+# Optional deployment experiments. These versions come from the 2026-07-23
+# quantization run, which used torch 2.10.0; both were re-verified to import and
+# run under the torch 2.13.0 pinned above.
+torchao==0.17.0
+bitsandbytes==0.49.2
+# mslk-cuda is intentionally not installed. Nothing in this repo imports it --
+# train/quantize.py and train/capture_environment.py only record its version in
+# their manifests -- and no published build works with torch 2.13.0. 1.0.0 is
+# built for torch 2.10 and 1.1.0 for torch 2.11/2.12; both fail to load
+# (undefined symbol in at::cuda). Installing either breaks `import peft` and
+# `import torchao` for the whole environment. Add it back only alongside a torch
+# version it was built against, in a separate quantization environment.
+# mslk-cuda==1.0.0
 # Optional fast kernels for the Qwen3.5 gated-DeltaNet (linear attention)
 # layers; without them transformers falls back to slower PyTorch ops.
 # causal-conv1d>=1.5.0

@@ -1,6 +1,6 @@
 # Chat2Order SFT
 
-검수·비식별화된 채팅에서 주문 JSON을 추출하도록 2B~4B급 언어 모델을 LoRA SFT하는 코드입니다. 로컬에 저장된 Qwen3.5 2B·4B와 Gemma 4 E4B-it(effective 4.5B, embedding 포함 raw 8B)를 비교합니다. Qwen3.5와 Gemma 4는 멀티모달 체크포인트지만 transformers v5의 `AutoModelForCausalLM`이 텍스트 백본만 로드하므로 학습·추론은 텍스트 전용으로 동작합니다. 단일 H100에서 BF16으로 실행하도록 설정했습니다.
+검수·비식별화된 채팅에서 주문 JSON을 추출하도록 2B~4B급 언어 모델을 LoRA SFT하는 코드입니다. 로컬에 저장된 Qwen3.5 2B·4B와 Gemma 4 E4B-it(effective 4.5B, embedding 포함 raw 8B), Gemma 4 E2B-it(raw 5.15B)를 비교합니다. Qwen3.5와 Gemma 4는 멀티모달 체크포인트지만 transformers v5의 `AutoModelForCausalLM`이 텍스트 백본만 로드하므로 학습·추론은 텍스트 전용으로 동작합니다. 단일 H100에서 BF16으로 실행하도록 설정했습니다.
 
 모델은 `order_name`, `phone_number`, `address`, `items[].raw_product`, `items[].raw_option`, `items[].volume`까지만 추출합니다. 카탈로그의 최종 `product`/`option` 선택은 학습 모델에 맡기지 않고 기존 `CatalogResolver`가 처리해야 합니다.
 
@@ -9,6 +9,7 @@
 - `configs/qwen3_5_2b.yaml`: Qwen3.5-2B 효율 비교 설정
 - `configs/qwen3_5_4b.yaml`: Qwen3.5-4B 품질 기준 설정
 - `configs/gemma4_e4b.yaml`: Gemma 4 E4B 비교 설정
+- `configs/gemma4_e2b.yaml`: Gemma 4 E2B 비교 설정(E4B와 모델만 다르고 나머지 조건 동일)
 - `data.py`: 입력 포맷, 스키마 검증, assistant-only label 생성
 - `validate_dataset.py`: schema, split 누수, token 길이 사전 검사
 - `sft.py`: Transformers Trainer + PEFT LoRA 학습
@@ -17,14 +18,18 @@
 
 ## 1. 환경 준비
 
-Python 3.11+ 기준을 권장합니다. Qwen3.5와 Gemma 4는 transformers 5.14 이상이 필요합니다.
+`train/requirements.txt`는 기록된 실험이 실제로 사용한 버전으로 고정되어 있습니다. 근거는 네 SFT 실행의 `training_manifest.json`(torch 2.13.0+cu130)과 2026-07-22 평가의 `scores/manifest.json`입니다.
 
 ```bash
-python -m venv train/.venv
-source train/.venv/bin/activate
+conda create -n c2o_train python=3.13 -y
+conda activate c2o_train
 python -m pip install --upgrade pip
 python -m pip install -r train/requirements.txt
 ```
+
+`google-genai`는 `train/evaluate.py`의 Gemini backend에만 필요하지만, 이 파일만으로 학습과 평가를 모두 실행할 수 있도록 포함했습니다. 최상위 `requirements.txt`와 같은 값이므로 두 파일의 핀을 함께 갱신하세요.
+
+`mslk-cuda`는 의도적으로 설치하지 않습니다. 이 저장소는 해당 패키지를 import하지 않고 `train/quantize.py`와 `train/capture_environment.py`가 manifest에 버전만 기록하는데, torch 2.13.0과 호환되는 빌드가 없습니다. 1.0.0은 torch 2.10, 1.1.0은 torch 2.11/2.12용이라 둘 다 `at::cuda` 심볼을 찾지 못하고, 설치되어 있으면 `import peft`와 `import torchao`까지 함께 실패합니다.
 
 GPU와 BF16 지원 여부를 확인합니다.
 
@@ -124,6 +129,13 @@ Gemma 4 E4B 비교 학습은 설정만 바꿉니다.
 ```bash
 CUDA_VISIBLE_DEVICES=0 python -m train.sft \
   --config train/configs/gemma4_e4b.yaml
+```
+
+Gemma 4 E2B는 같은 계열에서 모델 크기를 줄였을 때의 효과를 보기 위한 설정입니다. 모델 경로, `hub_id`, `revision`, `experiment_name`만 다르고 데이터·LoRA·하이퍼파라미터는 E4B와 동일합니다.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python -m train.sft \
+  --config train/configs/gemma4_e2b.yaml
 ```
 
 중단된 실행은 마지막 checkpoint부터 재개할 수 있습니다.
