@@ -29,6 +29,7 @@ MarketMate_Chat2Order/
 │   ├── order_extraction.txt
 │   └── address_to_search.txt
 ├── convert_chat_csv_to_jsonl.py  # CSV → JSONL 변환 스크립트
+├── crm/                          # 구매자별 주문 집계 (기간별 엑셀 추출, crm/README.md)
 ├── requirements.txt
 ├── styles/
 │   └── main.css                  # Streamlit 커스텀 CSS

@@ -259,4 +259,7 @@ train/cache/
 # for claude
 working
 
+# CRM 집계 산출물 (이름·전화번호·주소 포함)
+crm/output/
+
 # End of https://www.toptal.com/developers/gitignore/api/python,windows,macos,jupyternotebooks
