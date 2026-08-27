@@ -29,6 +29,8 @@ import pandas as pd
 
 
 UNKNOWN_NAME = "(미상)"
+UNKNOWN_CONTACT = "(연락처미상)"
+IDENTITY_MODES = ("name", "phone", "phone-address")
 
 # 카카오톡 대화 파일을 같은 라이브에서 두 번 내려받으면 파일명에 " (1)", " (2)"가 붙고
 # 그대로 채팅명이 된다. 기본적으로 제거해 동일인으로 합친다.
@@ -39,6 +41,7 @@ RAW_SHEET_COLUMNS = (
     "라이브일자",
     "채팅명키",
     "주문자명키",
+    "사람구분",
     "chat_name",
     "order_name",
     "product",
@@ -111,6 +114,15 @@ def normalize_name(
     return text or None
 
 
+def _digits(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.replace(r"\D", "", regex=True)
+
+
+def _address_key(series: pd.Series) -> pd.Series:
+    """주소 비교용 키. 표기 차이를 줄이려 공백·구두점을 제거하고 완전 일치만 같게 본다."""
+    return series.fillna("").astype(str).str.replace(r"[^0-9가-힣a-zA-Z]", "", regex=True)
+
+
 def to_kst_naive(series: pd.Series) -> pd.Series:
     """``+00:00`` 라벨이 붙은 KST 벽시계 문자열을 naive datetime 으로 되돌린다."""
     return pd.to_datetime(series, format="ISO8601", utc=True).dt.tz_localize(None)
@@ -175,6 +187,8 @@ def prepare_orders(
         or UNKNOWN_NAME
         for v in df["order_name"]
     ]
+    df["전화번호키"] = _digits(df["phone_number"])
+    df["주소키"] = _address_key(df["address"])
     df["채팅명키"], df["채팅명접미제거"] = _strip_name_suffix(df["채팅명키"], df["주문자명키"])
     df["주문자명키"], df["주문자명보정"] = _backfill_order_name(df)
     return df
@@ -275,6 +289,91 @@ def dedupe_reextractions(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     return deduped, len(df) - len(deduped)
 
 
+def _contact_keys(df: pd.DataFrame, mode: str) -> list[str]:
+    """동일인 판정에 쓸 연락처 컬럼. 값이 빈 문자열이면 판정 근거가 없다는 뜻."""
+    keys = ["전화번호키"]
+    if mode == "phone-address":
+        keys.append("주소키")
+    return keys
+
+
+def assign_person_key(df: pd.DataFrame, *, mode: str = "name") -> tuple[pd.Series, int]:
+    """``(채팅명, 주문자명)`` 그룹을 연락처로 더 쪼개 사람 단위 라벨을 만든다.
+
+    채팅명과 주문자명을 합쳐도 **둘 다 같은 동명이인**은 갈라지지 않는다. 실제로 채팅명·
+    주문자명이 모두 ``김미경`` 인 주소 7곳·전화 7개짜리 그룹이 있고, 이름만으로 세면
+    주문 18회로 2위에 올라간다. 이름은 그대로 두고 전화번호(``phone``)나
+    전화번호+주소(``phone-address``)가 같은 주문끼리 이어 붙여 사람을 나눈다.
+
+    반환하는 라벨은 그룹이 쪼개지지 않으면 빈 문자열, 쪼개지면 주문이 많은 순으로
+    ``#1``, ``#2`` …, 연락처가 없어 누구에게 붙일지 알 수 없는 주문은 ``(연락처미상)``.
+
+    ``mode="name"`` 이면 아무것도 쪼개지 않는다(요청 기준 그대로).
+    """
+    if mode not in IDENTITY_MODES:
+        raise ValueError(f"identity 는 {IDENTITY_MODES} 중 하나여야 합니다: {mode!r}")
+    labels = pd.Series("", index=df.index, dtype=object)
+    if mode == "name":
+        return labels, 0
+
+    contact_keys = _contact_keys(df, mode)
+    split_groups = 0
+    for _, group in df.groupby(["채팅명키", "주문자명키"], sort=False):
+        roots = _link_by_contact(group, contact_keys)
+        identified = roots[_has_contact(group, contact_keys)]
+        distinct = identified.unique()
+        if len(distinct) <= 1:
+            continue  # 사람이 1명이거나 판정 근거가 없다 → 쪼개지 않는다
+        split_groups += 1
+        labels.loc[group.index] = _label_components(group, roots, identified)
+    return labels, split_groups
+
+
+def _has_contact(group: pd.DataFrame, contact_keys: list[str]) -> pd.Series:
+    has = pd.Series(False, index=group.index)
+    for key in contact_keys:
+        has |= group[key] != ""
+    return has
+
+
+def _link_by_contact(group: pd.DataFrame, contact_keys: list[str]) -> pd.Series:
+    """같은 연락처 값을 공유하는 row 끼리 이어 붙이고 대표 row 를 반환한다(union-find)."""
+    parent = {index: index for index in group.index}
+
+    def find(node):
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    for key in contact_keys:
+        present = group[group[key] != ""]
+        for _, same in present.groupby(key, sort=False):
+            members = list(same.index)
+            for other in members[1:]:
+                root_a, root_b = find(members[0]), find(other)
+                if root_a != root_b:
+                    parent[root_a] = root_b
+    return pd.Series([find(index) for index in group.index], index=group.index)
+
+
+def _label_components(
+    group: pd.DataFrame, roots: pd.Series, identified: pd.Series
+) -> pd.Series:
+    """주문이 많은 사람부터 ``#1``, ``#2`` … 를 매긴다. 연락처 없는 row 는 미상 처리."""
+    ranked = (
+        group.assign(_root=roots)
+        .loc[identified.index]
+        .groupby("_root")
+        .agg(주문일수=("라이브일자", "nunique"), 수량=("volume", "sum"))
+        .sort_values(["주문일수", "수량"], ascending=False)
+    )
+    order = {root: f"#{rank}" for rank, root in enumerate(ranked.index, start=1)}
+    return pd.Series(
+        [order.get(root, UNKNOWN_CONTACT) for root in roots], index=group.index
+    )
+
+
 def _product_label(product, option) -> str:
     product = "(상품미상)" if product is None or pd.isna(product) else str(product)
     if option is None or pd.isna(option) or str(option).strip() == "":
@@ -348,8 +447,14 @@ def _aggregate(df: pd.DataFrame, keys: list[str]) -> pd.DataFrame:
 
 
 def build_buyer_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """요청 기준: 채팅명 + 주문자명 단위 요약."""
-    summary = _aggregate(df, ["채팅명키", "주문자명키"])
+    """요청 기준: 채팅명 + 주문자명 단위 요약.
+
+    ``사람구분`` 컬럼이 있으면(identity 옵션으로 동명이인을 쪼갠 경우) 그것까지 키로 쓴다.
+    """
+    keys = ["채팅명키", "주문자명키"]
+    if "사람구분" in df.columns and (df["사람구분"] != "").any():
+        keys.append("사람구분")
+    summary = _aggregate(df, keys)
     return summary.rename(columns={"채팅명키": "채팅명", "주문자명키": "주문자명"})
 
 
@@ -379,8 +484,11 @@ def build_phone_summary(df: pd.DataFrame) -> pd.DataFrame:
 
 def build_buyer_product_summary(df: pd.DataFrame) -> pd.DataFrame:
     """구매자 × 상품/옵션 단위 수량."""
+    keys = ["채팅명키", "주문자명키"]
+    if "사람구분" in df.columns and (df["사람구분"] != "").any():
+        keys.append("사람구분")
     grouped = (
-        df.groupby(["채팅명키", "주문자명키", "product", "option"], dropna=False)
+        df.groupby([*keys, "product", "option"], dropna=False)
         .agg(총수량=("volume", lambda s: int(s.fillna(0).sum())), 주문횟수=("라이브일자", "nunique"))
         .reset_index()
         .rename(
@@ -392,8 +500,10 @@ def build_buyer_product_summary(df: pd.DataFrame) -> pd.DataFrame:
             }
         )
     )
+    sort_keys = [c for c in ("채팅명", "주문자명", "사람구분") if c in grouped.columns]
     return grouped.sort_values(
-        ["채팅명", "주문자명", "총수량", "상품명"], ascending=[True, True, False, True]
+        [*sort_keys, "총수량", "상품명"],
+        ascending=[True] * len(sort_keys) + [False, True],
     ).reset_index(drop=True)
 
 
@@ -421,6 +531,7 @@ def build_sheets(
     strip_file_suffix: bool = True,
     strip_emoji: bool = False,
     strip_chat_prefixes: tuple[str, ...] = (),
+    identity: str = "name",
     meta: list[tuple[str, object]] | None = None,
     top: int = 0,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, object]]:
@@ -434,6 +545,9 @@ def build_sheets(
         strip_chat_prefixes=strip_chat_prefixes,
     )
     deduped, removed = dedupe_reextractions(prepared)
+    # 사람 분리는 반드시 중복 제거 뒤에 한다. 먼저 하면 재추출 사이에 연락처가 엇갈린
+    # row 들이 서로 다른 사람으로 갈려 중복 제거를 빠져나간다.
+    deduped["사람구분"], split_groups = assign_person_key(deduped, mode=identity)
 
     buyer = build_buyer_summary(deduped)
     stats = {
@@ -452,6 +566,8 @@ def build_sheets(
         "실측 기간": (
             f"{deduped['라이브일자'].min():%Y-%m-%d} ~ {deduped['라이브일자'].max():%Y-%m-%d}"
         ),
+        "동명이인 판정으로 쪼갠 그룹": split_groups,
+        "연락처 미상 row": int((deduped["사람구분"] == UNKNOWN_CONTACT).sum()),
         "미해결 항목 수(집계 제외)": len(unresolved),
     }
 

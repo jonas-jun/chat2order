@@ -12,7 +12,9 @@ import pandas as pd
 import pytest
 
 from crm.customer_summary import (
+    UNKNOWN_CONTACT,
     UNKNOWN_NAME,
+    assign_person_key,
     build_buyer_product_summary,
     build_buyer_summary,
     build_meta_sheet,
@@ -416,3 +418,103 @@ def test_order_name_backfilled_within_the_same_day_even_if_chat_has_two_names():
     df = prepared(orders, jobs)
     same_day = df[df["라이브일자"] == pd.Timestamp("2026-06-02")]
     assert set(same_day["주문자명키"]) == {"박혜령"}
+
+
+def test_identity_name_does_not_split_same_name_different_people():
+    """기본(name) 기준: 채팅명·주문자명이 모두 같으면 다른 사람이어도 한 행이 된다."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "김미경", "김미경", "가방", phone_number="010-1111-1111",
+                   address="서울 강동구 A", created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "김미경", "김미경", "지갑", phone_number="010-2222-2222",
+                   address="전남 보성군 B", created_at="2026-06-03T06:11:00+00:00"),
+    ]
+    summary = build_buyer_summary(prepared(orders, jobs))
+    assert len(summary) == 1
+    assert summary.loc[0, "주문횟수"] == 2
+    assert summary.loc[0, "전화번호종류수"] == 2  # 진단 컬럼으로만 드러난다
+
+
+def test_identity_phone_splits_same_name_different_people():
+    """identity=phone: 전화번호가 다르면 같은 이름이라도 다른 사람으로 나눈다."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "김미경", "김미경", "가방", phone_number="010-1111-1111",
+                   created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "김미경", "김미경", "지갑", phone_number="010-2222-2222",
+                   created_at="2026-06-03T06:11:00+00:00"),
+    ]
+    sheets, stats = build_sheets(
+        pd.DataFrame(orders), pd.DataFrame(jobs), pd.DataFrame(), identity="phone"
+    )
+    buyer = sheets["구매자요약"]
+    assert len(buyer) == 2
+    assert set(buyer["사람구분"]) == {"#1", "#2"}
+    assert list(buyer["주문횟수"]) == [1, 1]
+    assert stats["동명이인 판정으로 쪼갠 그룹"] == 1
+
+
+def test_identity_phone_keeps_same_person_together():
+    """번호 표기가 달라도 숫자가 같으면 한 사람이다 — 쪼개지지 않는다."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "김미경", "김미경", "가방", phone_number="010-1111-1111",
+                   created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "김미경", "김미경", "지갑", phone_number="01011111111",
+                   created_at="2026-06-03T06:11:00+00:00"),
+    ]
+    df = prepared(orders, jobs)
+    labels, split = assign_person_key(df, mode="phone")
+    assert split == 0
+    assert set(labels) == {""}
+
+
+def test_identity_phone_marks_unattributable_orders():
+    """번호가 둘 이상인 그룹에서 번호 없는 주문은 누구 것인지 알 수 없다 → 별도 라벨."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00"),
+            make_job("j3", live="2026-06-04T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "김미경", "김미경", "가방", phone_number="010-1111-1111",
+                   created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "김미경", "김미경", "지갑", phone_number="010-2222-2222",
+                   created_at="2026-06-03T06:11:00+00:00"),
+        make_order("j3", "김미경", "김미경", "신발", phone_number=None,
+                   created_at="2026-06-04T06:11:00+00:00"),
+    ]
+    labels, _ = assign_person_key(prepared(orders, jobs), mode="phone")
+    assert sorted(labels) == ["#1", "#2", UNKNOWN_CONTACT]
+
+
+def test_identity_phone_attaches_when_group_has_one_phone():
+    """번호가 하나뿐인 그룹은 번호 없는 주문도 그 사람 것으로 본다(쪼개지 않는다)."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "박은정", "박은정", "가방", phone_number="010-1111-1111",
+                   created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "박은정", "박은정", "지갑", phone_number=None,
+                   created_at="2026-06-03T06:11:00+00:00"),
+    ]
+    labels, split = assign_person_key(prepared(orders, jobs), mode="phone")
+    assert split == 0
+    assert set(labels) == {""}
+
+
+def test_identity_phone_address_merges_number_change():
+    """phone-address: 번호가 바뀌어도 주소가 같으면 한 사람으로 본다."""
+    jobs = [make_job("j1"), make_job("j2", live="2026-06-03T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "김미경", "김미경", "가방", phone_number="010-1111-1111",
+                   address="서울 강동구 구천면로 557", created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "김미경", "김미경", "지갑", phone_number="010-2222-2222",
+                   address="서울 강동구  구천면로557", created_at="2026-06-03T06:11:00+00:00"),
+    ]
+    df = prepared(orders, jobs)
+    assert assign_person_key(df, mode="phone")[1] == 1       # 번호만 보면 2명
+    assert assign_person_key(df, mode="phone-address")[1] == 0  # 주소로 이으면 1명
+
+
+def test_identity_rejects_unknown_mode():
+    jobs = [make_job("j1")]
+    orders = [make_order("j1", "김철수", "김철수", "가방")]
+    with pytest.raises(ValueError, match="identity"):
+        assign_person_key(prepared(orders, jobs), mode="address")

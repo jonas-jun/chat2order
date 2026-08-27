@@ -83,6 +83,25 @@ def resolve_user_ids(orders: pd.DataFrame, jobs: pd.DataFrame, args) -> list[str
     )
 
 
+def _warn_name_collisions(buyer: pd.DataFrame, args) -> None:
+    """이름 기준으로 셌을 때 동명이인이 섞인 그룹이 몇 개인지 알려준다.
+
+    조용히 두면 흔한 이름이 상위권에 올라간다(주소 7곳·전화 7개짜리 ``김미경`` 그룹이
+    주문 18회로 2위에 오른 사례). 대신 쪼개는 방법을 안내한다.
+    """
+    if args.identity != "name" or "전화번호종류수" not in buyer.columns:
+        return
+    mixed = buyer["전화번호종류수"] >= 2
+    if not mixed.any():
+        return
+    top = buyer.loc[mixed & (buyer["주문횟수"] >= 5)]
+    print(
+        f"\n주의: 전화번호가 2개 이상인 구매자 {int(mixed.sum())}명(주문 5회 이상 "
+        f"{len(top)}명)은 동명이인이 섞였을 수 있습니다. 이름만으로 세면 주문 횟수가 "
+        "부풀려집니다.\n  갈라내려면: --identity phone-address (또는 phone)"
+    )
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--start", required=True, help="집계 시작일 (KST, 포함). 예 2026-06-01")
@@ -99,6 +118,15 @@ def parse_args(argv=None):
         "--keep-file-suffix",
         action="store_true",
         help="채팅명의 ' (1)', ' (2)' 접미를 남긴다(기본은 제거해 동일인으로 합침)",
+    )
+    parser.add_argument(
+        "--identity",
+        choices=("name", "phone", "phone-address"),
+        default="name",
+        help="구매자 식별 기준. name=채팅명+주문자명(기본, 요청 기준), "
+        "phone=같은 이름이라도 전화번호가 다르면 다른 사람으로 나눈다, "
+        "phone-address=전화번호 또는 주소가 같으면 같은 사람으로 본다. "
+        "동명이인이 섞이는 문제는 phone 이상을 써야 갈라진다",
     )
     parser.add_argument("--strip-emoji", action="store_true", help="채팅명에서 이모지를 제거한다")
     parser.add_argument(
@@ -150,6 +178,7 @@ def main(argv=None) -> int:
         ("집계 기간(KST)", f"{args.start} ~ {args.end - timedelta(days=1)}"),
         ("대상 계정", ", ".join(user_ids) if user_ids else "전체"),
         ("라이브 일자 기준", args.time_basis),
+        ("구매자 식별 기준", args.identity),
         ("채팅명 ' (n)' 접미 제거", not args.keep_file_suffix),
         ("이모지 제거", args.strip_emoji),
         ("채팅명 접두어 제거", ", ".join(args.strip_chat_prefix) or "없음"),
@@ -163,6 +192,7 @@ def main(argv=None) -> int:
         strip_file_suffix=not args.keep_file_suffix,
         strip_emoji=args.strip_emoji,
         strip_chat_prefixes=tuple(args.strip_chat_prefix),
+        identity=args.identity,
         meta=meta,
         top=args.top,
     )
@@ -178,6 +208,7 @@ def main(argv=None) -> int:
 
     for label, value in stats.items():
         print(f"  {label}: {value}")
+    _warn_name_collisions(sheets[SHEET_BUYER] if SHEET_BUYER in sheets else first, args)
     print(f"저장: {output}  ({output.stat().st_size / 1024:.0f} KB)")
     print("주의: 이름·전화번호·주소가 들어간 개인정보 파일입니다. 커밋·외부 공유 금지.")
     return 0
