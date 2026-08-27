@@ -35,18 +35,6 @@ UNKNOWN_NAME = "(미상)"
 _FILE_SUFFIX = re.compile(r"\s*\(\d+\)$")
 _WHITESPACE = re.compile(r"\s+")
 
-# 재추출 중복 판정 키. 같은 라이브 일자에 내용이 완전히 같은 row 는 같은 주문의
-# 재추출 결과로 보고 1건만 남긴다.
-DEDUPE_KEYS = (
-    "라이브일자",
-    "채팅명키",
-    "주문자명키",
-    "phone_number",
-    "product",
-    "option",
-    "volume",
-)
-
 RAW_SHEET_COLUMNS = (
     "라이브일자",
     "채팅명키",
@@ -223,21 +211,67 @@ def _backfill_order_name(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
     무엇으로 채울지 알 수 없으므로 ``(미상)`` 그대로 둔다.
     """
     names = df["주문자명키"]
-    known = df.loc[names != UNKNOWN_NAME].groupby("채팅명키")["주문자명키"].unique()
-    unique_name = {chat: values[0] for chat, values in known.items() if len(values) == 1}
-    target = (names == UNKNOWN_NAME) & df["채팅명키"].isin(unique_name)
-    filled = names.where(~target, df["채팅명키"].map(unique_name))
-    return filled, target
+    filled_any = pd.Series(False, index=df.index)
+    # 좁은 범위(같은 날 같은 채팅명)부터 채운다. 재추출 사이에 이름을 잡은 job 과 못 잡은
+    # job 이 섞인 경우가 여기서 걸린다.
+    for scope in (["라이브일자", "채팅명키"], ["채팅명키"]):
+        unique_name = _unique_name_by(df.assign(주문자명키=names), scope)
+        scope_key = _scope_key(df, scope)
+        target = (names == UNKNOWN_NAME) & scope_key.isin(unique_name)
+        names = names.where(~target, scope_key.map(unique_name))
+        filled_any |= target
+    return names, filled_any
+
+
+def _scope_key(df: pd.DataFrame, scope: list[str]) -> pd.Series:
+    if len(scope) == 1:
+        return df[scope[0]]
+    return pd.Series(list(zip(*(df[c] for c in scope))), index=df.index)
+
+
+def _unique_name_by(df: pd.DataFrame, scope: list[str]) -> dict:
+    """범위별로 주문자명이 유일하게 확정되는 곳만 ``{범위키: 이름}`` 으로 반환한다."""
+    known = df.loc[df["주문자명키"] != UNKNOWN_NAME]
+    if known.empty:
+        return {}
+    grouped = known.groupby(scope, sort=False)["주문자명키"].unique()
+    return {key: values[0] for key, values in grouped.items() if len(values) == 1}
 
 
 def dedupe_reextractions(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """같은 라이브 일자에 내용이 동일한 row 를 1건으로 줄인다.
+    """``(라이브일자, 채팅명)`` 마다 job 하나의 주문 내역만 남긴다.
 
-    같은 채팅 파일을 여러 번 추출한 job 이 실제로 존재하므로(같은 날 95 row job 3개 등)
-    이를 남겨두면 수량이 그만큼 부풀려진다. 주문 건수는 ``(라이브일자, 채팅명)`` distinct
-    이라 중복에 영향받지 않지만, 수량 합계는 반드시 이 단계를 거쳐야 한다.
+    같은 대화 파일을 여러 번 추출한 job 이 실제로 존재해(같은 날 10 row job 3개 등) 그대로
+    두면 수량이 배로 잡힌다. 주문 건수는 ``(라이브일자, 채팅명)`` distinct 라 영향이 없지만
+    수량 합계는 이 단계를 반드시 거쳐야 한다.
+
+    **row 내용을 비교해 중복을 지우지 않는다.** 한 job 안에서 같은 상품이 여러 row 로 나오는
+    것은 그 고객이 실제로 여러 개를 주문한 것이므로(예: ``새틴바지`` x1 이 3 row) 지우면
+    수량이 깎인다. 반대로 재추출 사이에 ``order_name``·``phone_number`` 가 엇갈리면
+    (한 번은 이름을 잡고 한 번은 못 잡음) 내용 비교로는 중복이 걸러지지 않는다.
+    그래서 job 단위로 통째로 하나만 고른다.
+
+    고르는 기준은 **row 가 가장 많은 job**(가장 완전한 추출), 동수면 나중에 추출한 job.
+
+    한계: 같은 날 서로 다른 라이브가 2회 있고 같은 고객이 양쪽에 주문했다면 1건으로만
+    센다. 이 데이터에서 job 이 2개 이상인 690 그룹 중 642 그룹은 주문 내역이 완전히
+    동일해(= 순수 재추출) 그 영향은 작다.
     """
-    deduped = df.drop_duplicates(subset=list(DEDUPE_KEYS), keep="first")
+    ranked = (
+        df.groupby(["라이브일자", "채팅명키", "job_id"], sort=False)
+        .agg(row수=("job_id", "size"), 최종추출=("추출일시", "max"))
+        .reset_index()
+        .sort_values(
+            ["라이브일자", "채팅명키", "row수", "최종추출", "job_id"],
+            ascending=[True, True, False, False, True],
+        )
+    )
+    keep = ranked.drop_duplicates(["라이브일자", "채팅명키"], keep="first")
+    deduped = df.merge(
+        keep[["라이브일자", "채팅명키", "job_id"]],
+        on=["라이브일자", "채팅명키", "job_id"],
+        how="inner",
+    )
     return deduped, len(df) - len(deduped)
 
 

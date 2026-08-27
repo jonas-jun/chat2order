@@ -2,7 +2,9 @@
 
 실 데이터에서 확인된 함정 3가지를 고정한다.
 1. ``order_number`` 는 전역 유일하지 않다(추출일 접두 + job 단위 리셋) → 주문 단위 키로 쓰면 안 된다.
-2. 같은 채팅 파일을 여러 번 추출한 job 이 존재한다 → 수량이 배로 부풀려진다.
+2. 같은 채팅 파일을 여러 번 추출한 job 이 존재한다 → 수량이 배로 부풀려진다. 재추출 사이에
+   ``order_name`` 이 엇갈리면 row 내용 비교로는 걸러지지 않고, 반대로 한 job 안의 동일 상품
+   여러 row 는 실제 수량이라 지우면 안 된다 → job 단위로 하나만 고른다.
 3. 저장된 시각은 KST 벽시계에 ``+00:00`` 라벨이 붙은 값이다 → tz 변환하면 9시간 밀린다.
 """
 
@@ -353,3 +355,64 @@ def test_chat_prefix_is_stripped_when_requested():
     merged = build_buyer_summary(prepared(orders, jobs, strip_chat_prefixes=("O이지픽_",)))
     assert len(merged) == 1
     assert merged.loc[0, "주문횟수"] == 2
+
+
+def test_intra_job_duplicate_items_are_kept():
+    """한 job 안의 동일 상품 여러 row 는 실제 주문 수량이다 — 지우면 수량이 깎인다."""
+    jobs = [make_job("j1")]
+    orders = [
+        make_order("j1", "박혜령", "박혜령", "새틴바지", id=f"a{i}") for i in range(3)
+    ]
+    deduped, removed = dedupe_reextractions(prepared(orders, jobs))
+    assert removed == 0
+    assert build_buyer_summary(deduped).loc[0, "총수량"] == 3
+
+
+def test_reextraction_with_disagreeing_order_name_is_deduped():
+    """재추출 사이에 이름을 잡은 job 과 못 잡은 job 이 섞여도 한 job 만 남아야 한다.
+
+    row 내용 비교로는 주문자명이 달라 중복으로 걸리지 않던 케이스(박혜령 2026-06-02).
+    """
+    jobs = [make_job("j1"), make_job("j2"), make_job("j3")]
+    orders = [
+        make_order("j1", "박혜령", "박혜령", "새틴바지", id="a"),
+        make_order("j2", "박혜령", None, "새틴바지", id="b"),
+        make_order("j3", "박혜령", "박혜령", "새틴바지", id="c"),
+    ]
+    deduped, removed = dedupe_reextractions(prepared(orders, jobs))
+    assert removed == 2
+    summary = build_buyer_summary(deduped)
+    assert len(summary) == 1
+    assert summary.loc[0, "총수량"] == 1
+
+
+def test_most_complete_job_wins():
+    """재추출이 서로 다른 개수를 뽑았으면 row 가 많은(가장 완전한) job 을 남긴다."""
+    jobs = [make_job("j1"), make_job("j2")]
+    orders = [
+        make_order("j1", "김철수", "김철수", "가방", id="a"),
+        make_order("j2", "김철수", "김철수", "가방", id="b"),
+        make_order("j2", "김철수", "김철수", "지갑", id="c"),
+        make_order("j2", "김철수", "김철수", "신발", id="d"),
+    ]
+    deduped, removed = dedupe_reextractions(prepared(orders, jobs))
+    assert removed == 1
+    assert set(deduped["job_id"]) == {"j2"}
+    assert build_buyer_summary(deduped).loc[0, "총수량"] == 3
+
+
+def test_order_name_backfilled_within_the_same_day_even_if_chat_has_two_names():
+    """채팅명 전체로는 이름이 2개라도, 같은 날 안에서 유일하면 그 날 이름으로 채운다."""
+    jobs = [make_job("j1"), make_job("j2"), make_job("j3", live="2026-06-13T06:00:00+00:00")]
+    orders = [
+        make_order("j1", "박혜령", "박혜령", "새틴바지", id="a",
+                   created_at="2026-06-02T06:11:00+00:00"),
+        make_order("j2", "박혜령", None, "새틴바지", id="b",
+                   created_at="2026-06-02T07:11:00+00:00"),
+        # 같은 채팅명에 다른 이름이 붙은 다른 날 주문 → 채팅명 전체 보정은 막힌다
+        make_order("j3", "박혜령", "노용순", "가방", id="c",
+                   created_at="2026-06-13T06:11:00+00:00"),
+    ]
+    df = prepared(orders, jobs)
+    same_day = df[df["라이브일자"] == pd.Timestamp("2026-06-02")]
+    assert set(same_day["주문자명키"]) == {"박혜령"}
